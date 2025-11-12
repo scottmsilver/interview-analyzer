@@ -1,0 +1,563 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #fafafa;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app {
+  max-width: 1200px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 1rem 1.5rem;
+}
+
+.container {
+  width: 100%;
+}
+
+/* Header */
+.header {
+  margin-bottom: 1rem;
+  margin-left: -1.5rem;
+  margin-right: -1.5rem;
+  padding: 0 1.5rem;
+}
+
+.header-content {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.header h1 {
+  font-size: 2rem;
+  font-weight: 600;
+  color: #111;
+  margin: 0;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+.user-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #e1e4e8;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.user-avatar:hover {
+  border-color: #999;
+}
+
+.user-avatar-fallback {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #4285f4;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border: 2px solid #e1e4e8;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.user-avatar-fallback:hover {
+  border-color: #999;
+  background: #3367d6;
+}
+
+.logout-button {
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  background: transparent;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.logout-button:hover {
+  border-color: #111;
+  background: #fafafa;
+}
+
+/* Upload Card - Horizontal */
+.upload-card-horizontal {
+  background: white;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: nowrap;
+  width: 100%;
+}
+
+.select-compact {
+  padding: 0.625rem 0.875rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  background: white;
+  cursor: pointer;
+  transition: border-color 0.2s;
+  flex: 0 0 auto;
+  min-width: 150px;
+}
+
+.select-compact:hover:not(:disabled) {
+  border-color: #999;
+}
+
+.select-compact:focus {
+  outline: none;
+  border-color: #111;
+}
+
+.select-compact:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.file-input {
+  display: none;
+}
+
+.file-label-compact {
+  cursor: pointer;
+  flex: 1 1 auto;
+  min-width: 200px;
+  max-width: 100%;
+}
+
+.file-button-compact {
+  display: block;
+  padding: 0.625rem 0.875rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  color: #666;
+  transition: all 0.2s;
+  background: white;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-button-compact:hover {
+  border-color: #999;
+  color: #111;
+}
+
+.analyze-button-compact {
+  padding: 0.625rem 1.5rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: white;
+  background: #111;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.analyze-button-compact:hover:not(:disabled) {
+  background: #000;
+}
+
+.analyze-button-compact:disabled {
+  opacity: 0.8;
+  cursor: not-allowed;
+}
+
+.jumping-dino {
+  display: inline-block;
+  animation: jump 0.6s ease-in-out infinite;
+  font-size: 1.2rem;
+}
+
+@keyframes jump {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+/* Status Message */
+.status-message-inline {
+  font-size: 0.9rem;
+  color: #666;
+  text-align: center;
+  margin-top: 0.75rem;
+  padding: 0.5rem;
+  background: #f9f9f9;
+  border-radius: 6px;
+}
+
+/* Thinking Flyout */
+.thinking-flyout {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  width: 400px;
+  max-height: 60vh;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  transition: transform 0.3s ease;
+}
+
+.thinking-flyout.closed {
+  transform: translateY(calc(100% - 50px));
+}
+
+.thinking-flyout.open {
+  transform: translateY(0);
+}
+
+.flyout-header {
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  background: #fafafa;
+  border-radius: 12px 12px 0 0;
+}
+
+.flyout-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #111;
+}
+
+.flyout-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.flyout-status {
+  font-size: 0.8rem;
+  color: #666;
+  max-width: 150px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flyout-toggle {
+  background: transparent;
+  border: none;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  color: #666;
+  transition: color 0.2s;
+}
+
+.flyout-toggle:hover {
+  color: #111;
+}
+
+.flyout-content {
+  max-height: calc(60vh - 60px);
+  overflow-y: auto;
+  padding: 0.75rem;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+}
+
+.log-entry {
+  font-size: 0.8rem;
+  color: #444;
+  padding: 0.5rem;
+  line-height: 1.5;
+  word-break: break-word;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+  white-space: pre-wrap;
+  transition: background 0.2s;
+}
+
+.log-entry:hover {
+  background: #f0f0f0;
+}
+
+/* Color code different log types */
+.log-entry:has-text("💭") {
+  background: #f0f8ff;
+  border-left: 3px solid #4a90e2;
+}
+
+.log-entry:has-text("🛠️") {
+  background: #fff8e1;
+  border-left: 3px solid #ffa726;
+}
+
+.log-entry:has-text("✅") {
+  background: #f1f8f4;
+  border-left: 3px solid #4caf50;
+}
+
+.log-entry:has-text("❌") {
+  background: #ffebee;
+  border-left: 3px solid #f44336;
+}
+
+.log-entry:has-text("🌐") {
+  background: #e8f5e9;
+  border-left: 3px solid #66bb6a;
+}
+
+/* Error */
+.error-box {
+  padding: 0.875rem;
+  background: #fee;
+  border: 1px solid #fcc;
+  border-radius: 8px;
+  color: #c33;
+  font-size: 0.9rem;
+}
+
+/* Results */
+.results {
+  background: white;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  position: relative;
+  width: 100%;
+}
+
+.copy-button {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  padding: 0.4rem;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+}
+
+.copy-button:hover {
+  border-color: #111;
+  background: #fafafa;
+  color: #111;
+}
+
+.copy-button svg {
+  display: block;
+}
+
+/* Markdown Content */
+.markdown-body {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1rem;
+  line-height: 1.65;
+  color: #2c2c2c;
+}
+
+.markdown-body h1 {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 1.75rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #e1e4e8;
+  color: #111;
+  letter-spacing: -0.02em;
+}
+
+.markdown-body h1:first-child {
+  margin-top: 0;
+}
+
+.markdown-body h2 {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.65rem;
+  color: #111;
+  letter-spacing: -0.01em;
+}
+
+.markdown-body h3 {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.5rem;
+  color: #333;
+}
+
+.markdown-body p {
+  margin: 0.85rem 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0.75rem 0;
+  padding-left: 1.75rem;
+}
+
+.markdown-body li {
+  margin: 0.4rem 0;
+  line-height: 1.6;
+}
+
+.markdown-body code {
+  background: #f5f5f5;
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.9em;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+}
+
+.markdown-body pre {
+  background: #f5f5f5;
+  padding: 0.75rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid #d0d7de;
+  padding: 0.65rem 0.85rem;
+  text-align: left;
+}
+
+.markdown-body th {
+  background: #f6f8fa;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 600;
+  color: #111;
+}
+
+.markdown-body blockquote {
+  margin: 1rem 0;
+  padding: 0.75rem 1.25rem;
+  border-left: 4px solid #d0d7de;
+  color: #57606a;
+  font-style: italic;
+  background: #f6f8fa;
+}
+
+.markdown-body strong {
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.markdown-body em {
+  font-style: italic;
+  color: #444;
+}
+
+.markdown-body a {
+  color: #0366d6;
+  text-decoration: none;
+  border-bottom: 1px solid #0366d6;
+}
+
+.markdown-body a:hover {
+  color: #0256c7;
+  border-bottom-color: #0256c7;
+}
+
+/* Loading */
+.loading {
+  text-align: center;
+  font-size: 1rem;
+  color: #666;
+  padding: 2rem;
+}
+
+/* Footer */
+.footer {
+  text-align: center;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  font-size: 0.85rem;
+  color: #999;
+}
+
+/* Mobile */
+@media (max-width: 640px) {
+  .app {
+    padding: 0.75rem 1rem;
+  }
+
+  .header {
+    margin-left: -1rem;
+    margin-right: -1rem;
+    padding: 0 1rem;
+  }
+
+  .header h1 {
+    font-size: 1.5rem;
+  }
+
+  .upload-card,
+  .results {
+    padding: 1rem;
+  }
+
+  .copy-button {
+    top: 0.5rem;
+    right: 0.5rem;
+  }
+}

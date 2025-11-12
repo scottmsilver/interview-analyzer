@@ -1,0 +1,17 @@
+services:
+- type: web
+  name: interview-analyzer-api
+  env: node
+  region: oregon
+  plan: free
+  buildCommand: npm install && npm run build
+  startCommand: npm start
+  envVars:
+  - key: NODE_ENV
+    value: production
+  - key: ANTHROPIC_API_KEY
+    sync: false
+  - key: PORT
+    value: 3001
+  - key: ALLOWED_ORIGINS
+    value: https://interview-analyzer-prod.web.app,https://interview-analyzer-prod.firebaseapp.com

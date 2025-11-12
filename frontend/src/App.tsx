@@ -1,0 +1,338 @@
+import { useState, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeHighlight from 'rehype-highlight'
+import 'github-markdown-css/github-markdown-light.css'
+import 'highlight.js/styles/github.css'
+import './App.css'
+import { Login } from './Login'
+import { auth } from './firebase'
+import { onAuthStateChanged, signOut, type User } from 'firebase/auth'
+
+interface InterviewType {
+  id: string
+  name: string
+}
+
+const INTERVIEW_TYPES: InterviewType[] = [
+  { id: 'google-apm', name: 'Google APM' },
+  { id: 'meta-pm', name: 'Meta PM' },
+  { id: 'amazon-pm', name: 'Amazon PM' },
+  { id: 'generic', name: 'Generic PM' },
+]
+
+function App() {
+  const [user, setUser] = useState<User | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [file, setFile] = useState<File | null>(null)
+  const [interviewType, setInterviewType] = useState<string>('google-apm')
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analysis, setAnalysis] = useState('')
+  const [error, setError] = useState('')
+  const [statusMessage, setStatusMessage] = useState('')
+  const [agentLogs, setAgentLogs] = useState<string[]>([])
+  const [showLogs, setShowLogs] = useState(true)
+
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+
+  // Listen to Firebase auth state changes
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser)
+      setLoading(false)
+    })
+
+    // Cleanup subscription
+    return () => unsubscribe()
+  }, [])
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0]
+    if (selectedFile) {
+      setFile(selectedFile)
+      setError('')
+      setAnalysis('')
+    }
+  }
+
+  const analyzeInterview = async () => {
+    if (!file) {
+      setError('Please select a transcript file')
+      return
+    }
+
+    setAnalyzing(true)
+    setAnalysis('')
+    setError('')
+    setStatusMessage('Connecting to AI agent...')
+    setAgentLogs([])
+
+    const formData = new FormData()
+    formData.append('transcript', file)
+    formData.append('interviewType', interviewType)
+
+    try {
+      const response = await fetch(`${API_URL}/api/analyze/stream`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const reader = response.body?.getReader()
+      const decoder = new TextDecoder()
+
+      if (!reader) {
+        throw new Error('No response body')
+      }
+
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6)
+
+            try {
+              const message = JSON.parse(data)
+
+              // Create detailed log entry based on message type
+              const timestamp = new Date().toLocaleTimeString()
+              let logEntry = ''
+
+              if (message.type === 'thinking') {
+                logEntry = `💭 ${timestamp} | THINKING: ${message.content || message.fullContent || 'Processing...'}`
+                setStatusMessage('🤔 Agent is thinking...')
+              } else if (message.type === 'tool_use') {
+                logEntry = `🛠️ ${timestamp} | TOOL: ${message.content || message.tool || 'unknown'}`
+                if (message.input) {
+                  logEntry += `\n   Input: ${JSON.stringify(message.input).substring(0, 100)}`
+                }
+                setStatusMessage(message.content || 'Using tool...')
+              } else if (message.type === 'tool_result') {
+                logEntry = `✅ ${timestamp} | RESULT: ${message.content || 'Tool completed'}`
+                setStatusMessage('Processing results...')
+              } else if (message.type === 'progress') {
+                logEntry = `📊 ${timestamp} | ${message.content}`
+                setStatusMessage(message.content)
+              } else if (message.type === 'complete') {
+                logEntry = `✅ ${timestamp} | COMPLETE: Analysis finished`
+                setAnalyzing(false)
+                setStatusMessage('Analysis complete!')
+              } else if (message.type === 'error') {
+                logEntry = `❌ ${timestamp} | ERROR: ${message.message}`
+                setError(message.message)
+                setAnalyzing(false)
+                setStatusMessage('Error occurred')
+              } else if (message.type === 'result') {
+                logEntry = `📝 ${timestamp} | OUTPUT: Generating final analysis...`
+                setAnalysis(prev => prev + message.content)
+                setStatusMessage('Rendering analysis...')
+              } else if (message.content) {
+                logEntry = `📝 ${timestamp} | ${message.type || 'MESSAGE'}: ${message.content.substring(0, 100)}`
+                setAnalysis(prev => prev + message.content)
+              } else {
+                logEntry = `📋 ${timestamp} | ${message.type || 'UNKNOWN'}: ${JSON.stringify(message).substring(0, 100)}`
+              }
+
+              if (logEntry) {
+                setAgentLogs(prev => [...prev, logEntry])
+              }
+            } catch (e) {
+              console.error('Parse error:', e)
+            }
+          }
+        }
+      }
+
+    } catch (err) {
+      console.error('Analysis error:', err)
+      setError(err instanceof Error ? err.message : 'Analysis failed')
+      setAnalyzing(false)
+    }
+  }
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth)
+      setAnalysis('')
+      setFile(null)
+    } catch (error) {
+      console.error('Logout error:', error)
+    }
+  }
+
+  // Show loading state while checking auth
+  if (loading) {
+    return (
+      <div className="app">
+        <div className="container">
+          <div className="loading">Loading...</div>
+        </div>
+      </div>
+    )
+  }
+
+  // Show login if not authenticated
+  if (!user) {
+    return <Login onLogin={() => setLoading(false)} />
+  }
+
+  return (
+    <div className="app">
+      <div className="container">
+        <header className="header">
+          <div className="header-content">
+            <h1>Interview Analyzer</h1>
+            <div className="header-actions">
+              <div className="user-avatar-fallback" title={user.email || ''}>
+                {user.email ? user.email.charAt(0).toUpperCase() : 'U'}
+              </div>
+              <button onClick={handleLogout} className="logout-button">
+                Logout
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <div className="upload-card-horizontal">
+          <select
+            value={interviewType}
+            onChange={(e) => setInterviewType(e.target.value)}
+            disabled={analyzing}
+            className="select-compact"
+          >
+            {INTERVIEW_TYPES.map(type => (
+              <option key={type.id} value={type.id}>
+                {type.name}
+              </option>
+            ))}
+          </select>
+
+          <label className="file-label-compact">
+            <input
+              type="file"
+              accept=".txt"
+              onChange={handleFileChange}
+              disabled={analyzing}
+              className="file-input"
+            />
+            <span className="file-button-compact">
+              {file ? `✓ ${file.name}` : 'Choose transcript'}
+            </span>
+          </label>
+
+          <button
+            onClick={analyzeInterview}
+            disabled={!file || analyzing}
+            className="analyze-button-compact"
+          >
+            {analyzing ? (
+              <>
+                <span className="jumping-dino">🦖</span>
+                <span>Analyzing...</span>
+              </>
+            ) : (
+              'Analyze'
+            )}
+          </button>
+        </div>
+
+        {error && (
+          <div className="error-box">
+            {error}
+          </div>
+        )}
+
+        {agentLogs.length > 0 && (
+          <div className={`thinking-flyout ${showLogs ? 'open' : 'closed'}`}>
+            <div className="flyout-header">
+              <span className="flyout-title">💭 Agent Thinking ({agentLogs.length})</span>
+              <div className="flyout-actions">
+                {analyzing && statusMessage && (
+                  <span className="flyout-status">{statusMessage}</span>
+                )}
+                <button
+                  onClick={() => setShowLogs(!showLogs)}
+                  className="flyout-toggle"
+                >
+                  {showLogs ? '✕' : '▶'}
+                </button>
+              </div>
+            </div>
+            {showLogs && (
+              <div className="flyout-content">
+                {agentLogs.map((log, i) => (
+                  <div key={i} className="log-entry">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeHighlight]}
+                    >
+                      {log}
+                    </ReactMarkdown>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {analysis && (
+          <div className="results">
+            <button
+              onClick={() => {
+                const markdownBody = document.querySelector('.markdown-body')
+                if (markdownBody) {
+                  // Copy the rendered HTML as rich text
+                  const selection = window.getSelection()
+                  const range = document.createRange()
+                  range.selectNodeContents(markdownBody)
+                  selection?.removeAllRanges()
+                  selection?.addRange(range)
+                  document.execCommand('copy')
+                  selection?.removeAllRanges()
+                  alert('Copied to clipboard!')
+                } else {
+                  // Fallback to markdown text
+                  navigator.clipboard.writeText(analysis)
+                  alert('Copied to clipboard!')
+                }
+              }}
+              className="copy-button"
+              title="Copy to clipboard"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M5.75 4.75H10.25V1.75H5.75V4.75ZM4.5 1.5C4.5 0.947715 4.94772 0.5 5.5 0.5H10.5C11.0523 0.5 11.5 0.947715 11.5 1.5V5C11.5 5.55228 11.0523 6 10.5 6H5.5C4.94772 6 4.5 5.55228 4.5 5V1.5Z" fill="currentColor"/>
+                <path d="M2.5 4.5C1.94772 4.5 1.5 4.94772 1.5 5.5V14C1.5 14.5523 1.94772 15 2.5 15H11C11.5523 15 12 14.5523 12 14V13H13.5V14C13.5 15.3807 12.3807 16.5 11 16.5H2.5C1.11929 16.5 0 15.3807 0 14V5.5C0 4.11929 1.11929 3 2.5 3H4V4.5H2.5Z" fill="currentColor" transform="translate(0.5, -0.5)"/>
+              </svg>
+            </button>
+
+            <div className="markdown-body">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeHighlight]}
+              >
+                {analysis}
+              </ReactMarkdown>
+            </div>
+          </div>
+        )}
+
+        <footer className="footer">
+          Interview Analyzer
+        </footer>
+      </div>
+    </div>
+  )
+}
+
+export default App
