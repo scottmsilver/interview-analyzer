@@ -176,7 +176,7 @@
   }
 
   .header-content {
-    padding: 0 1rem;
+    padding: 0 1.25rem;
     gap: 0.5rem;
     flex-wrap: wrap;
     max-width: 100%;
@@ -219,7 +219,7 @@
   }
 
   .header-content {
-    padding: 0 0.75rem;
+    padding: 0 1rem;
   }
 
   .header h1 {

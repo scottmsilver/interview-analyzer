@@ -587,16 +587,14 @@ body {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.5rem 0.75rem;
-  background: var(--bg-hover);
-  border-radius: 16px;
-  border: 1px solid rgba(199, 122, 75, 0.1);
-  transition: all 0.2s;
+  padding: 0;
+  background: transparent;
+  border: none;
+  transition: opacity 0.2s;
 }
 
 .tip:hover {
-  background: var(--primary-50);
-  transform: translateY(-1px);
+  opacity: 0.8;
 }
 
 .tip-icon {
