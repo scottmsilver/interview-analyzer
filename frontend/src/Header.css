@@ -172,11 +172,11 @@
 /* Mobile */
 @media (max-width: 768px) {
   .header {
-    padding: 0.3rem 0;
+    padding: 0.3rem 0.75rem;
   }
 
   .header-content {
-    padding: 0 0.5rem;
+    padding: 0;
     gap: 0.5rem;
     flex-wrap: wrap;
   }
@@ -213,6 +213,10 @@
 
 /* Very small mobile */
 @media (max-width: 400px) {
+  .header {
+    padding: 0.3rem 0.5rem;
+  }
+
   .header h1 {
     font-size: 1rem;
   }
