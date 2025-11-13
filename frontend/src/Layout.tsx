@@ -5,7 +5,7 @@ import './Layout.css'
 interface LayoutProps {
   user: User | null
   isAdmin: boolean
-  currentView: 'main' | 'admin'
+  currentView: 'main' | 'admin' | 'history' | 'analysis'
   children: React.ReactNode
 }
 

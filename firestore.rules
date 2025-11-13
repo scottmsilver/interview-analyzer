@@ -33,6 +33,24 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Analyses collection - stores saved interview analyses
+    match /analyses/{analysisId} {
+      // Anyone can read (for future sharing feature)
+      allow read: if true;
+
+      // Only authenticated users can create, and only with their own userId
+      allow create: if request.auth != null
+                    && request.resource.data.userId == request.auth.uid;
+
+      // Users can update their own analyses
+      allow update: if request.auth != null
+                    && resource.data.userId == request.auth.uid;
+
+      // Users can delete their own analyses
+      allow delete: if request.auth != null
+                    && resource.data.userId == request.auth.uid;
+    }
+
     // Default deny all other collections
     match /{document=**} {
       allow read, write: if false;

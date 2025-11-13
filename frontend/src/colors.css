@@ -1,0 +1,65 @@
+:root {
+  /* Warm, earthy color palette for a calming interview experience */
+
+  /* Primary colors - warm terracotta/clay tones */
+  --primary-50: #fdf8f6;
+  --primary-100: #f9ede6;
+  --primary-200: #f4ddd0;
+  --primary-300: #e8bfa6;
+  --primary-400: #d99973;
+  --primary-500: #c77a4b;  /* Main primary */
+  --primary-600: #b86439;
+  --primary-700: #9a4f30;
+  --primary-800: #7d422b;
+  --primary-900: #663826;
+
+  /* Secondary colors - sage green for balance */
+  --sage-50: #f7f9f6;
+  --sage-100: #ecf0e9;
+  --sage-200: #dae3d3;
+  --sage-300: #b9c9ae;
+  --sage-400: #93a881;
+  --sage-500: #738c5f;  /* Main sage */
+  --sage-600: #5b7049;
+  --sage-700: #49593a;
+  --sage-800: #3b4830;
+  --sage-900: #323d29;
+
+  /* Neutral colors - warm grays */
+  --neutral-50: #fafaf9;
+  --neutral-100: #f5f4f2;
+  --neutral-200: #e8e6e3;
+  --neutral-300: #d4d0cb;
+  --neutral-400: #a8a29a;
+  --neutral-500: #787169;
+  --neutral-600: #5e5851;
+  --neutral-700: #4a453f;
+  --neutral-800: #3a3633;
+  --neutral-900: #2b2826;
+
+  /* Accent colors */
+  --accent-gold: #d4a574;  /* Warm gold for success/highlights */
+  --accent-coral: #e8a598; /* Soft coral for warnings */
+  --accent-sky: #a3c4d2;   /* Calm sky blue for info */
+
+  /* Background colors */
+  --bg-main: #fdfcfb;      /* Very light warm white */
+  --bg-card: #ffffff;
+  --bg-hover: #faf8f6;
+
+  /* Text colors */
+  --text-primary: #3a3633;
+  --text-secondary: #5e5851;
+  --text-muted: #787169;
+  --text-light: #a8a29a;
+
+  /* Border colors */
+  --border-light: #e8e6e3;
+  --border-medium: #d4d0cb;
+
+  /* Status colors (softer versions) */
+  --success: #738c5f;
+  --warning: #d4a574;
+  --error: #c77a4b;
+  --info: #a3c4d2;
+}

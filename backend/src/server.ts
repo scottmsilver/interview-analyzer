@@ -18,7 +18,9 @@ const PORT = process.env.PORT || 3001;
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
   'http://localhost:3000',
   'http://localhost:5173',
-  'http://localhost:5174'
+  'http://localhost:5174',
+  'http://localhost:5175',
+  'http://localhost:5176'
 ];
 
 app.use(cors({
@@ -126,6 +128,7 @@ app.post('/api/analyze/stream', upload.single('transcript'), async (req: Request
       const data = JSON.stringify({
         type: message.type,
         content: message.content,
+        raw: (message as any).raw,
         timestamp: message.timestamp.toISOString()
       });
 
@@ -135,6 +138,9 @@ app.post('/api/analyze/stream', upload.single('transcript'), async (req: Request
       if (typeof (res as any).flush === 'function') {
         (res as any).flush();
       }
+
+      // Also log to console for debugging
+      console.log(`[Streaming to client] ${message.type}: ${message.content?.substring(0, 50)}...`);
     }
 
     // Send completion message

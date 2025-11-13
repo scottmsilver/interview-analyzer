@@ -148,22 +148,24 @@ export async function analyzeInterview(
 
   // Return an async generator that yields messages
   return (async function* () {
-    // Send initial progress update
-    yield {
-      type: 'progress',
-      content: '🔍 Starting AI agent analysis...',
-      timestamp: new Date()
-    };
-
     let messageCount = 0;
 
     for await (const message of result) {
       messageCount++;
 
-      // Log message for debugging
-      console.log(`[Message ${messageCount}] Type: ${message.type}`);
+      // Log ALL messages for debugging
+      console.log(`[SDK Message ${messageCount}] Type: ${message.type}`,
+        message.subtype ? `Subtype: ${message.subtype}` : '');
 
-      // Handle different message types
+      // Send raw message data for ALL message types
+      yield {
+        type: 'raw',
+        content: `[${message.type}${message.subtype ? ':' + message.subtype : ''}]`,
+        timestamp: new Date(),
+        raw: message
+      };
+
+      // Handle specific message types
       if (message.type === 'result') {
         // Final result contains the full analysis as a string
         if (message.subtype === 'success' && message.result) {
@@ -174,40 +176,75 @@ export async function analyzeInterview(
           };
         }
       } else if (message.type === 'assistant') {
-        // Stream assistant messages as progress
+        // Stream assistant message details
         const assistantMsg = message.message;
-        let text = '';
 
         if (assistantMsg.content && Array.isArray(assistantMsg.content)) {
           for (const block of assistantMsg.content) {
-            if (block.type === 'text') {
-              text += block.text || '';
+            if (block.type === 'text' && block.text) {
+              // Send text content
+              const text = block.text.trim();
+              if (text) {
+                yield {
+                  type: 'raw',
+                  content: text.substring(0, 500), // Limit length
+                  timestamp: new Date(),
+                  raw: { type: 'text', full: text }
+                };
+              }
+            } else if (block.type === 'tool_use') {
+              // Send tool use info
+              yield {
+                type: 'raw',
+                content: `Using tool: ${block.name}`,
+                timestamp: new Date(),
+                raw: { type: 'tool_use', tool: block.name, input: block.input }
+              };
             }
           }
         }
-
-        if (text) {
+      } else if (message.type === 'tool_progress') {
+        // Tool progress with timing
+        yield {
+          type: 'raw',
+          content: `Tool progress: ${message.tool_name} (${message.elapsed_time_seconds.toFixed(1)}s)`,
+          timestamp: new Date(),
+          raw: message
+        };
+      } else if (message.type === 'user') {
+        // User messages (from the SDK itself)
+        const userMsg = (message as any).message;
+        if (userMsg?.content) {
           yield {
-            type: 'progress',
-            content: `💭 ${text.substring(0, 100)}...`,
-            timestamp: new Date()
+            type: 'raw',
+            content: `[User message from SDK]`,
+            timestamp: new Date(),
+            raw: message
           };
         }
-      } else if (message.type === 'tool_progress') {
-        // Tool progress updates
+      } else if (message.type === 'system') {
+        // System messages
         yield {
-          type: 'progress',
-          content: `🛠️ Using ${message.tool_name} (${message.elapsed_time_seconds.toFixed(1)}s)`,
-          timestamp: new Date()
+          type: 'raw',
+          content: `[System message]`,
+          timestamp: new Date(),
+          raw: message
         };
+      } else if (message.type === 'stream_event') {
+        // Stream events (partial updates)
+        const event = (message as any).event;
+        if (event?.type === 'content_block_delta' && event?.delta?.text) {
+          // We could accumulate these but they're often noisy
+          // For now, just note that streaming is happening
+          yield {
+            type: 'raw',
+            content: `[Streaming...]`,
+            timestamp: new Date(),
+            raw: { type: 'stream_delta', text: event.delta.text }
+          };
+        }
       }
     }
-
-    yield {
-      type: 'progress',
-      content: '✅ Analysis complete!',
-      timestamp: new Date()
-    };
   })();
 }
 

@@ -7,7 +7,7 @@ import './Header.css'
 interface HeaderProps {
   user: User | null
   isAdmin: boolean
-  currentView: 'main' | 'admin'
+  currentView: 'main' | 'admin' | 'history' | 'analysis'
 }
 
 export function Header({ user, isAdmin, currentView }: HeaderProps) {
@@ -42,15 +42,31 @@ export function Header({ user, isAdmin, currentView }: HeaderProps) {
     <header className="header">
       <div className="header-content">
         <h1>Interview Analyzer</h1>
-        <div className="header-actions">
+
+        <nav className="header-nav">
+          <button
+            onClick={() => navigate('/')}
+            className={`nav-tab ${currentView === 'main' ? 'active' : ''}`}
+          >
+            Analyze
+          </button>
+          <button
+            onClick={() => navigate('/history')}
+            className={`nav-tab ${currentView === 'history' ? 'active' : ''}`}
+          >
+            History
+          </button>
           {isAdmin && (
             <button
-              onClick={() => navigate(currentView === 'admin' ? '/' : '/admin')}
-              className="admin-link"
+              onClick={() => navigate('/admin')}
+              className={`nav-tab ${currentView === 'admin' ? 'active' : ''}`}
             >
-              {currentView === 'admin' ? 'Analyzer' : 'Admin'}
+              Admin
             </button>
           )}
+        </nav>
+
+        <div className="header-actions">
           <div className="profile-menu-container">
             <div
               className="user-avatar-fallback"

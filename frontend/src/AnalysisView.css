@@ -1,0 +1,86 @@
+.analysis-view-header {
+  margin-bottom: 0.25rem;
+}
+
+.analysis-meta {
+  background: white;
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  border: 1px solid rgba(199, 122, 75, 0.12);
+}
+
+.analysis-view-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #111;
+  margin: 0;
+  line-height: 1;
+  margin-right: auto;
+}
+
+.analysis-view-separator {
+  color: #ddd;
+  font-size: 0.75rem;
+}
+
+.analysis-view-date {
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.analysis-view-filename {
+  font-size: 0.8rem;
+  color: #888;
+  margin: 0;
+  font-family: 'SF Mono', Monaco, monospace;
+}
+
+.share-button {
+  padding: 0.4rem 0.75rem;
+  background: white;
+  border: 1px solid var(--accent-gold);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--primary-600);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.share-button:hover {
+  border-color: var(--primary-500);
+  background: var(--primary-50);
+  color: var(--primary-700);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(212, 165, 116, 0.3);
+}
+
+@media (max-width: 768px) {
+  .analysis-view-title {
+    font-size: 0.9rem;
+    width: 100%;
+    margin-bottom: 0.25rem;
+  }
+
+  .analysis-meta {
+    padding: 0.4rem 0.75rem;
+  }
+
+  .analysis-view-separator {
+    display: none;
+  }
+
+  .interview-type-badge,
+  .analysis-view-filename,
+  .analysis-view-date {
+    font-size: 0.7rem;
+  }
+}

@@ -1,0 +1,9 @@
+Interviewer: Hi, thanks for joining us today. Let's start with a product design question. How would you design a new feature for Google Maps to help tourists explore a city?
+
+Candidate: Great question! Let me think about this systematically. First, I want to understand the user and their needs. Tourists visiting a new city typically have several pain points - they don't know what to see, they have limited time, they might not speak the local language, and they want to experience both popular attractions and local hidden gems.
+
+For Google Maps, I'd design a "Tourist Mode" feature that could be activated when someone arrives in a new city. Let me walk through the key components...
+
+Interviewer: That sounds interesting. What metrics would you track to measure success?
+
+Candidate: Good question. I'd track several metrics including feature adoption rate, daily active users in tourist mode, and completion rate of suggested itineraries.

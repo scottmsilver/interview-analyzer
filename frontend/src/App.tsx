@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -8,10 +8,12 @@ import 'highlight.js/styles/github.css'
 import './App.css'
 import { Login } from './Login'
 import { Admin } from './Admin'
+import { History } from './History'
+import { AnalysisView } from './AnalysisView'
 import { Layout } from './Layout'
 import { auth, db } from './firebase'
 import { onAuthStateChanged, type User } from 'firebase/auth'
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore'
+import { doc, getDoc, setDoc, onSnapshot, collection, addDoc } from 'firebase/firestore'
 
 interface InterviewType {
   id: string
@@ -32,6 +34,31 @@ interface UserApproval {
   approvedAt?: string
 }
 
+// Component for each log entry with raw data toggle
+function LogEntry({ log }: { log: { content: string, raw: any } }) {
+  const [showRaw, setShowRaw] = useState(false)
+
+  return (
+    <div className="log-entry-wrapper">
+      <div className="log-entry">
+        {log.content}
+        <button
+          className="raw-toggle"
+          onClick={() => setShowRaw(!showRaw)}
+          title={showRaw ? "Hide raw data" : "Show raw data"}
+        >
+          {showRaw ? '▼' : '▶'} raw
+        </button>
+      </div>
+      {showRaw && (
+        <div className="raw-data">
+          {JSON.stringify(log.raw, null, 2)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function MainApp() {
   const [user, setUser] = useState<User | null>(null)
   const [userApproval, setUserApproval] = useState<UserApproval | null>(null)
@@ -43,8 +70,12 @@ function MainApp() {
   const [analysis, setAnalysis] = useState('')
   const [error, setError] = useState('')
   const [statusMessage, setStatusMessage] = useState('')
-  const [agentLogs, setAgentLogs] = useState<string[]>([])
+  const [agentLogs, setAgentLogs] = useState<{content: string, raw: any}[]>([])
   const [showLogs, setShowLogs] = useState(true)
+  const [showSaveDialog, setShowSaveDialog] = useState(false)
+  const [saveTitle, setSaveTitle] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [autoSaved, setAutoSaved] = useState(false)
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
@@ -102,12 +133,67 @@ function MainApp() {
     return () => unsubscribe()
   }, [])
 
+  // Auto-save when analysis is complete
+  useEffect(() => {
+    if (analysis && !analyzing && user && file && !autoSaved) {
+      // Wait a bit to ensure the analysis is fully loaded
+      const timer = setTimeout(() => {
+        saveAnalysis(true)
+        setAutoSaved(true)
+        // Show auto-save message briefly
+        setStatusMessage('✅ Auto-saved to history')
+        setTimeout(() => {
+          setStatusMessage('')
+        }, 3000)
+      }, 1000)
+
+      return () => clearTimeout(timer)
+    }
+  }, [analysis, analyzing, user, file, autoSaved])
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0]
     if (selectedFile) {
       setFile(selectedFile)
       setError('')
       setAnalysis('')
+    }
+  }
+
+  const saveAnalysis = async (autoSave = false) => {
+    if (!user || !analysis || !file) return
+
+    setSaving(true)
+    try {
+      const now = new Date()
+      const dateStr = now.toLocaleDateString()
+      const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+      const analysisData = {
+        userId: user.uid,
+        interviewType,
+        transcriptFileName: file.name,
+        analysis,
+        title: saveTitle || `${file.name}`,
+        savedAt: `${dateStr} at ${timeStr}`,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString()
+      }
+
+      await addDoc(collection(db, 'analyses'), analysisData)
+
+      if (!autoSave) {
+        setShowSaveDialog(false)
+        setSaveTitle('')
+        alert('Analysis saved successfully!')
+      }
+    } catch (err) {
+      console.error('Error saving analysis:', err)
+      if (!autoSave) {
+        alert('Failed to save analysis: ' + (err instanceof Error ? err.message : 'Unknown error'))
+      }
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -122,6 +208,7 @@ function MainApp() {
     setError('')
     setStatusMessage('Connecting to AI agent...')
     setAgentLogs([])
+    setAutoSaved(false)  // Reset auto-save flag for new analysis
 
     const formData = new FormData()
     formData.append('transcript', file)
@@ -161,47 +248,24 @@ function MainApp() {
             try {
               const message = JSON.parse(data)
 
-              // Create detailed log entry based on message type
-              const timestamp = new Date().toLocaleTimeString()
-              let logEntry = ''
-
-              if (message.type === 'thinking') {
-                logEntry = `💭 ${timestamp} | THINKING: ${message.content || message.fullContent || 'Processing...'}`
-                setStatusMessage('🤔 Agent is thinking...')
-              } else if (message.type === 'tool_use') {
-                logEntry = `🛠️ ${timestamp} | TOOL: ${message.content || message.tool || 'unknown'}`
-                if (message.input) {
-                  logEntry += `\n   Input: ${JSON.stringify(message.input).substring(0, 100)}`
-                }
-                setStatusMessage(message.content || 'Using tool...')
-              } else if (message.type === 'tool_result') {
-                logEntry = `✅ ${timestamp} | RESULT: ${message.content || 'Tool completed'}`
-                setStatusMessage('Processing results...')
-              } else if (message.type === 'progress') {
-                logEntry = `📊 ${timestamp} | ${message.content}`
+              // Store both content and raw message
+              if (message.type === 'raw') {
+                setAgentLogs(prev => [...prev, {
+                  content: message.content,
+                  raw: message.raw || message
+                }])
                 setStatusMessage(message.content)
+              } else if (message.type === 'result') {
+                setAnalysis(prev => prev + message.content)
+                setStatusMessage('Rendering analysis...')
+                setAnalyzing(false)
+                // Auto-save will be triggered after all messages are processed
               } else if (message.type === 'complete') {
-                logEntry = `✅ ${timestamp} | COMPLETE: Analysis finished`
                 setAnalyzing(false)
                 setStatusMessage('Analysis complete!')
               } else if (message.type === 'error') {
-                logEntry = `❌ ${timestamp} | ERROR: ${message.message}`
-                setError(message.message)
+                setError(message.content || 'Analysis failed')
                 setAnalyzing(false)
-                setStatusMessage('Error occurred')
-              } else if (message.type === 'result') {
-                logEntry = `📝 ${timestamp} | OUTPUT: Generating final analysis...`
-                setAnalysis(prev => prev + message.content)
-                setStatusMessage('Rendering analysis...')
-              } else if (message.content) {
-                logEntry = `📝 ${timestamp} | ${message.type || 'MESSAGE'}: ${message.content.substring(0, 100)}`
-                setAnalysis(prev => prev + message.content)
-              } else {
-                logEntry = `📋 ${timestamp} | ${message.type || 'UNKNOWN'}: ${JSON.stringify(message).substring(0, 100)}`
-              }
-
-              if (logEntry) {
-                setAgentLogs(prev => [...prev, logEntry])
               }
             } catch (e) {
               console.error('Parse error:', e)
@@ -347,14 +411,7 @@ function MainApp() {
             {showLogs && (
               <div className="flyout-content">
                 {agentLogs.map((log, i) => (
-                  <div key={i} className="log-entry">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      rehypePlugins={[rehypeHighlight]}
-                    >
-                      {log}
-                    </ReactMarkdown>
-                  </div>
+                  <LogEntry key={i} log={log} />
                 ))}
               </div>
             )}
@@ -363,33 +420,45 @@ function MainApp() {
 
         {analysis && (
           <div className="results">
-            <button
-              onClick={() => {
-                const markdownBody = document.querySelector('.markdown-body')
-                if (markdownBody) {
-                  // Copy the rendered HTML as rich text
-                  const selection = window.getSelection()
-                  const range = document.createRange()
-                  range.selectNodeContents(markdownBody)
-                  selection?.removeAllRanges()
-                  selection?.addRange(range)
-                  document.execCommand('copy')
-                  selection?.removeAllRanges()
-                  alert('Copied to clipboard!')
-                } else {
-                  // Fallback to markdown text
-                  navigator.clipboard.writeText(analysis)
-                  alert('Copied to clipboard!')
-                }
-              }}
-              className="copy-button"
-              title="Copy to clipboard"
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M5.75 4.75H10.25V1.75H5.75V4.75ZM4.5 1.5C4.5 0.947715 4.94772 0.5 5.5 0.5H10.5C11.0523 0.5 11.5 0.947715 11.5 1.5V5C11.5 5.55228 11.0523 6 10.5 6H5.5C4.94772 6 4.5 5.55228 4.5 5V1.5Z" fill="currentColor"/>
-                <path d="M2.5 4.5C1.94772 4.5 1.5 4.94772 1.5 5.5V14C1.5 14.5523 1.94772 15 2.5 15H11C11.5523 15 12 14.5523 12 14V13H13.5V14C13.5 15.3807 12.3807 16.5 11 16.5H2.5C1.11929 16.5 0 15.3807 0 14V5.5C0 4.11929 1.11929 3 2.5 3H4V4.5H2.5Z" fill="currentColor" transform="translate(0.5, -0.5)"/>
-              </svg>
-            </button>
+            <div className="results-actions">
+              {autoSaved && (
+                <span className="auto-saved-indicator">✅ Auto-saved</span>
+              )}
+              <button
+                onClick={() => setShowSaveDialog(true)}
+                className="save-button"
+                title="Save analysis with custom title"
+              >
+                💾 {autoSaved ? 'Save Again' : 'Save'}
+              </button>
+              <button
+                onClick={() => {
+                  const markdownBody = document.querySelector('.markdown-body')
+                  if (markdownBody) {
+                    // Copy the rendered HTML as rich text
+                    const selection = window.getSelection()
+                    const range = document.createRange()
+                    range.selectNodeContents(markdownBody)
+                    selection?.removeAllRanges()
+                    selection?.addRange(range)
+                    document.execCommand('copy')
+                    selection?.removeAllRanges()
+                    alert('Copied to clipboard!')
+                  } else {
+                    // Fallback to markdown text
+                    navigator.clipboard.writeText(analysis)
+                    alert('Copied to clipboard!')
+                  }
+                }}
+                className="copy-button"
+                title="Copy to clipboard"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M5.75 4.75H10.25V1.75H5.75V4.75ZM4.5 1.5C4.5 0.947715 4.94772 0.5 5.5 0.5H10.5C11.0523 0.5 11.5 0.947715 11.5 1.5V5C11.5 5.55228 11.0523 6 10.5 6H5.5C4.94772 6 4.5 5.55228 4.5 5V1.5Z" fill="currentColor"/>
+                  <path d="M2.5 4.5C1.94772 4.5 1.5 4.94772 1.5 5.5V14C1.5 14.5523 1.94772 15 2.5 15H11C11.5523 15 12 14.5523 12 14V13H13.5V14C13.5 15.3807 12.3807 16.5 11 16.5H2.5C1.11929 16.5 0 15.3807 0 14V5.5C0 4.11929 1.11929 3 2.5 3H4V4.5H2.5Z" fill="currentColor" transform="translate(0.5, -0.5)"/>
+                </svg>
+              </button>
+            </div>
 
             <div className="markdown-body">
               <ReactMarkdown
@@ -405,6 +474,42 @@ function MainApp() {
       <footer className="footer">
         Interview Analyzer
       </footer>
+
+      {showSaveDialog && (
+        <div className="modal-overlay" onClick={() => setShowSaveDialog(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>Save Analysis</h3>
+            <p>Give this analysis a title (optional):</p>
+            <input
+              type="text"
+              value={saveTitle}
+              onChange={(e) => setSaveTitle(e.target.value)}
+              placeholder={file ? `${file.name} - ${new Date().toLocaleDateString()}` : 'Untitled Analysis'}
+              className="save-title-input"
+              autoFocus
+            />
+            <div className="modal-actions">
+              <button
+                onClick={() => {
+                  setShowSaveDialog(false)
+                  setSaveTitle('')
+                }}
+                className="cancel-button"
+                disabled={saving}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveAnalysis}
+                className="confirm-button"
+                disabled={saving}
+              >
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   )
 }
@@ -416,6 +521,8 @@ function App() {
       <Routes>
         <Route path="/" element={<MainApp />} />
         <Route path="/admin" element={<Admin />} />
+        <Route path="/history" element={<History />} />
+        <Route path="/analysis/:analysisId" element={<AnalysisView />} />
       </Routes>
     </Router>
   )
