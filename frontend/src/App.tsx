@@ -1,4 +1,4 @@
-import { useState, useEffect, Fragment } from 'react'
+import { useState, useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -553,7 +553,7 @@ function MainApp() {
                 Cancel
               </button>
               <button
-                onClick={saveAnalysis}
+                onClick={() => saveAnalysis()}
                 className="confirm-button"
                 disabled={saving}
               >
