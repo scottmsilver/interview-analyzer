@@ -61,6 +61,10 @@ export function Login({ onLogin }: LoginProps) {
 
     try {
       const provider = new GoogleAuthProvider()
+      // Force account selection every time
+      provider.setCustomParameters({
+        prompt: 'select_account'
+      })
       await signInWithPopup(auth, provider)
       onLogin()
     } catch (err: any) {

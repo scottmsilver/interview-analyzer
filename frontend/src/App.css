@@ -9,87 +9,16 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background: #fafafa;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden; /* Prevent body scroll */
 }
 
 #root {
-  min-height: 100vh;
-}
-
-.app {
-  max-width: 1200px;
+  height: 100vh;
   width: 100%;
-  margin-left: auto;
-  margin-right: auto;
-  padding: 1rem 1.5rem;
-}
-
-.container {
-  width: 100%;
-}
-
-/* Header */
-.header {
-  margin-bottom: 1rem;
-  margin-left: -1.5rem;
-  margin-right: -1.5rem;
-  padding: 0 1.5rem;
-}
-
-.header-content {
   display: flex;
-  align-items: center;
-  gap: 2rem;
-  width: 100%;
-  min-width: 0;
-}
-
-.header h1 {
-  font-size: 2rem;
-  font-weight: 600;
-  color: #111;
-  margin: 0;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-left: auto;
-}
-
-.user-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 2px solid #e1e4e8;
-  cursor: pointer;
-  transition: border-color 0.2s;
-}
-
-.user-avatar:hover {
-  border-color: #999;
-}
-
-.user-avatar-fallback {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: #4285f4;
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.9rem;
-  font-weight: 600;
-  border: 2px solid #e1e4e8;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.user-avatar-fallback:hover {
-  border-color: #999;
-  background: #3367d6;
+  flex-direction: column;
 }
 
 .logout-button {
@@ -560,4 +489,60 @@ body {
     top: 0.5rem;
     right: 0.5rem;
   }
+}
+
+/* Pending Approval Styles */
+.pending-approval {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 60vh;
+  padding: 2rem;
+}
+
+.pending-approval-card {
+  background: white;
+  border-radius: 12px;
+  padding: 3rem;
+  max-width: 600px;
+  width: 100%;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  text-align: center;
+}
+
+.pending-approval-card h2 {
+  font-size: 1.75rem;
+  margin-bottom: 1.5rem;
+  color: #333;
+}
+
+.pending-approval-card p {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: #666;
+  margin-bottom: 1rem;
+}
+
+.pending-info {
+  background: #f5f5f5;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin: 2rem 0;
+  text-align: left;
+}
+
+.pending-info p {
+  margin-bottom: 0.5rem;
+  color: #444;
+}
+
+.pending-info p:last-child {
+  margin-bottom: 0;
+}
+
+.pending-note {
+  font-size: 0.875rem;
+  font-style: italic;
+  color: #888;
+  margin-top: 2rem;
 }

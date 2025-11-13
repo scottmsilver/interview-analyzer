@@ -1,0 +1,42 @@
+.layout {
+  height: 100vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #fafafa;
+  overflow: hidden; /* Prevent scrolling on the layout itself */
+}
+
+.layout-container {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding-top: 70px; /* Account for fixed header height */
+  overflow-y: scroll; /* Always show scrollbar space */
+  overflow-x: hidden;
+}
+
+.layout-content {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 1rem 2rem;
+}
+
+/* Center content with max-width, but allow full-width children */
+.layout-content > * {
+  width: 100%;
+  max-width: 900px;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+  .layout-content {
+    padding: 0.75rem 1rem;
+    gap: 1rem;
+  }
+}

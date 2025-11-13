@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
@@ -6,8 +7,11 @@ import 'github-markdown-css/github-markdown-light.css'
 import 'highlight.js/styles/github.css'
 import './App.css'
 import { Login } from './Login'
-import { auth } from './firebase'
-import { onAuthStateChanged, signOut, type User } from 'firebase/auth'
+import { Admin } from './Admin'
+import { Layout } from './Layout'
+import { auth, db } from './firebase'
+import { onAuthStateChanged, type User } from 'firebase/auth'
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore'
 
 interface InterviewType {
   id: string
@@ -21,8 +25,17 @@ const INTERVIEW_TYPES: InterviewType[] = [
   { id: 'generic', name: 'Generic PM' },
 ]
 
-function App() {
+interface UserApproval {
+  approved: boolean
+  email: string
+  createdAt: string
+  approvedAt?: string
+}
+
+function MainApp() {
   const [user, setUser] = useState<User | null>(null)
+  const [userApproval, setUserApproval] = useState<UserApproval | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
   const [file, setFile] = useState<File | null>(null)
   const [interviewType, setInterviewType] = useState<string>('google-apm')
@@ -37,9 +50,52 @@ function App() {
 
   // Listen to Firebase auth state changes
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser)
-      setLoading(false)
+
+      if (firebaseUser) {
+        // Check if user is an admin
+        const adminRef = doc(db, 'admins', firebaseUser.uid)
+        const adminSnap = await getDoc(adminRef)
+        setIsAdmin(adminSnap.exists())
+
+        // Check/create user approval document
+        const userRef = doc(db, 'users', firebaseUser.uid)
+        const userSnap = await getDoc(userRef)
+
+        if (!userSnap.exists()) {
+          // Create new user document with pending status
+          const newUserData: UserApproval = {
+            approved: false,
+            email: firebaseUser.email || '',
+            createdAt: new Date().toISOString()
+          }
+          try {
+            await setDoc(userRef, newUserData)
+            setUserApproval(newUserData)
+          } catch (error) {
+            console.error('Error creating user document:', error)
+            // Set user approval anyway so they see the pending screen
+            setUserApproval(newUserData)
+          }
+        } else {
+          setUserApproval(userSnap.data() as UserApproval)
+        }
+
+        // Listen for real-time approval status updates
+        const unsubscribeSnapshot = onSnapshot(userRef, (doc) => {
+          if (doc.exists()) {
+            setUserApproval(doc.data() as UserApproval)
+          }
+        })
+
+        setLoading(false)
+        return () => unsubscribeSnapshot()
+      } else {
+        setUserApproval(null)
+        setIsAdmin(false)
+        setLoading(false)
+      }
     })
 
     // Cleanup subscription
@@ -161,15 +217,6 @@ function App() {
     }
   }
 
-  const handleLogout = async () => {
-    try {
-      await signOut(auth)
-      setAnalysis('')
-      setFile(null)
-    } catch (error) {
-      console.error('Logout error:', error)
-    }
-  }
 
   // Show loading state while checking auth
   if (loading) {
@@ -187,24 +234,52 @@ function App() {
     return <Login onLogin={() => setLoading(false)} />
   }
 
-  return (
-    <div className="app">
-      <div className="container">
-        <header className="header">
-          <div className="header-content">
-            <h1>Interview Analyzer</h1>
-            <div className="header-actions">
-              <div className="user-avatar-fallback" title={user.email || ''}>
-                {user.email ? user.email.charAt(0).toUpperCase() : 'U'}
-              </div>
-              <button onClick={handleLogout} className="logout-button">
-                Logout
-              </button>
-            </div>
+  // Show pending approval message if not approved (must be explicitly approved)
+  // Also catches the case where userApproval is null/undefined
+  if (user && (!userApproval || userApproval.approved !== true)) {
+    // If userApproval hasn't loaded yet, show loading state
+    if (!userApproval) {
+      return (
+        <div className="app">
+          <div className="container">
+            <div className="loading">Loading...</div>
           </div>
-        </header>
+        </div>
+      )
+    }
 
-        <div className="upload-card-horizontal">
+    // Show the full pending approval screen
+    return (
+      <Layout user={user} isAdmin={isAdmin} currentView="main">
+        <div className="pending-approval">
+          <div className="pending-approval-card">
+            <h2>⏳ Account Pending Approval</h2>
+            <p>Thank you for signing up! Your account is currently pending approval.</p>
+            <p>
+              You'll receive access once an administrator approves your account.
+              This typically happens within 24 hours.
+            </p>
+            <div className="pending-info">
+              <p><strong>Email:</strong> {user.email}</p>
+              <p><strong>Signed up:</strong> {new Date(userApproval.createdAt).toLocaleString()}</p>
+            </div>
+            <p className="pending-note">
+              This page will automatically update when you're approved - no need to refresh!
+            </p>
+          </div>
+        </div>
+
+        <footer className="footer">
+          Interview Analyzer
+        </footer>
+      </Layout>
+    )
+  }
+
+  // At this point, user is authenticated, approved, and not an admin
+  return (
+    <Layout user={user} isAdmin={isAdmin} currentView="main">
+      <div className="upload-card-horizontal">
           <select
             value={interviewType}
             onChange={(e) => setInterviewType(e.target.value)}
@@ -327,11 +402,22 @@ function App() {
           </div>
         )}
 
-        <footer className="footer">
-          Interview Analyzer
-        </footer>
-      </div>
-    </div>
+      <footer className="footer">
+        Interview Analyzer
+      </footer>
+    </Layout>
+  )
+}
+
+// Router wrapper component
+function App() {
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<MainApp />} />
+        <Route path="/admin" element={<Admin />} />
+      </Routes>
+    </Router>
   )
 }
 

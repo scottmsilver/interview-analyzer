@@ -1,0 +1,41 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return request.auth != null && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Admins collection - stores admin users
+    match /admins/{adminId} {
+      // Users can read their own admin document (to check if they're admin)
+      // Admins can read all admin documents
+      allow read: if request.auth != null && (request.auth.uid == adminId || isAdmin());
+      // Nobody can write (must be done via Firebase Console or Admin SDK)
+      allow write: if false;
+    }
+
+    // Users collection - stores approval status
+    match /users/{userId} {
+      // Users can read their own document, admins can read all
+      allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
+
+      // Allow users to create their own document on first signup
+      allow create: if request.auth != null
+                    && request.auth.uid == userId
+                    && request.resource.data.approved == false
+                    && request.resource.data.email == request.auth.token.email;
+
+      // Allow admins to update any user document
+      // Prevent regular users from updating their own
+      allow update: if isAdmin();
+
+      allow delete: if isAdmin();
+    }
+
+    // Default deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
