@@ -12,7 +12,7 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
-  padding-top: 70px; /* Account for fixed header height */
+  padding-top: 56px; /* Account for fixed header height */
   overflow-y: scroll; /* Always show scrollbar space */
   overflow-x: hidden;
 }

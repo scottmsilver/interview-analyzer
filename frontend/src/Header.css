@@ -5,7 +5,7 @@
   left: 0;
   right: 0;
   width: 100%;
-  padding: 1rem 2rem;
+  padding: 0.75rem 2rem;
   border-bottom: 1px solid #e1e4e8;
   background: white;
   z-index: 100;
@@ -22,8 +22,10 @@
 }
 
 .header h1 {
-  font-size: 2rem;
-  font-weight: 600;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   color: #111;
   margin: 0;
 }
@@ -133,7 +135,7 @@
 /* Mobile */
 @media (max-width: 768px) {
   .header {
-    padding: 0.75rem 1rem;
+    padding: 0.625rem 1rem;
   }
 
   .header-content {
@@ -141,6 +143,6 @@
   }
 
   .header h1 {
-    font-size: 1.5rem;
+    font-size: 1.125rem;
   }
 }
