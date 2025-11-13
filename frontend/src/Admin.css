@@ -1,59 +1,14 @@
-.admin-title-section {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1.5rem;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.admin-title-section h2 {
+.users-section h2 {
   font-size: 1.5rem;
   font-weight: 600;
   color: #111;
   margin: 0;
 }
 
-.admin-subtitle {
-  font-size: 0.9rem;
-  color: #666;
-  margin-top: 0.25rem;
-}
-
-.admin-stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1.5rem;
-  width: 100%;
-}
-
-.stat-card {
-  background: white;
-  border-radius: 12px;
-  padding: 2rem;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  text-align: center;
-}
-
-.stat-number {
-  font-size: 2.5rem;
-  font-weight: 700;
-  color: #111;
-  margin-bottom: 0.5rem;
-}
-
-.stat-label {
-  font-size: 0.875rem;
-  color: #666;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.users-section h2 {
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: #111;
+.users-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 1.5rem;
 }
 
@@ -201,17 +156,33 @@
   border-radius: 6px;
   font-size: 0.875rem;
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.disconnect-button {
+  background: transparent;
+  border: none;
+  color: #065f46;
+  cursor: pointer;
+  padding: 0.125rem 0.25rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  transition: all 0.2s;
+  opacity: 0.6;
+}
+
+.disconnect-button:hover {
+  background: rgba(6, 95, 70, 0.1);
+  opacity: 1;
 }
 
 @media (max-width: 768px) {
-  .admin-title-section {
+  .users-header {
     flex-direction: column;
     align-items: flex-start;
     gap: 1rem;
-  }
-
-  .admin-stats {
-    grid-template-columns: 1fr;
   }
 
   /* On mobile, make table columns smaller */

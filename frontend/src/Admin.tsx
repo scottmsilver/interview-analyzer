@@ -94,6 +94,25 @@ export function Admin() {
     window.open(authUrl, '_blank', 'width=600,height=700')
   }
 
+  const disconnectGmail = async () => {
+    const user = auth.currentUser
+    if (!user) return
+
+    if (!confirm('Are you sure you want to disconnect Gmail? You will need to re-authorize to send approval emails.')) {
+      return
+    }
+
+    try {
+      await updateDoc(doc(db, 'admins', user.uid), {
+        gmailTokens: null,
+        gmailAuthorizedAt: null
+      })
+    } catch (error) {
+      console.error('Error disconnecting Gmail:', error)
+      alert('Error disconnecting Gmail: ' + (error instanceof Error ? error.message : 'Unknown error'))
+    }
+  }
+
   if (loading) {
     return (
       <Layout user={auth.currentUser} isAdmin={true} currentView="admin">
@@ -102,47 +121,27 @@ export function Admin() {
     )
   }
 
-  const pendingCount = pendingUsers.filter(u => !u.approved).length
-  const approvedCount = pendingUsers.filter(u => u.approved).length
-
   return (
     <Layout user={auth.currentUser} isAdmin={isAdmin} currentView="admin">
-      <div className="admin-title-section">
-        <div>
-          <h2>Admin Dashboard</h2>
-          <p className="admin-subtitle">Manage user approvals</p>
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          {gmailAuthorized ? (
-            <div className="gmail-status">
-              <span style={{ color: '#10b981', marginRight: '0.5rem' }}>✓</span>
-              Gmail Connected
-            </div>
-          ) : (
-            <button onClick={authorizeGmail} className="gmail-button">
-              📧 Connect Gmail
-            </button>
-          )}
-        </div>
-      </div>
-
-        <div className="admin-stats">
-          <div className="stat-card">
-            <div className="stat-number">{pendingCount}</div>
-            <div className="stat-label">Pending Approval</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-number">{approvedCount}</div>
-            <div className="stat-label">Approved Users</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-number">{pendingUsers.length}</div>
-            <div className="stat-label">Total Users</div>
-          </div>
-        </div>
-
         <div className="users-section">
-          <h2>Users</h2>
+          <div className="users-header">
+            <h2>Users</h2>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              {gmailAuthorized ? (
+                <div className="gmail-status">
+                  <span style={{ color: '#10b981', marginRight: '0.5rem' }}>✓</span>
+                  Gmail Connected
+                  <button onClick={disconnectGmail} className="disconnect-button" title="Disconnect Gmail">
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <button onClick={authorizeGmail} className="gmail-button">
+                  📧 Connect Gmail
+                </button>
+              )}
+            </div>
+          </div>
           {pendingUsers.length === 0 ? (
             <div className="empty-state">
               <p>No users yet. Users will appear here when they sign up.</p>
