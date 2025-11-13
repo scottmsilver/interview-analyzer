@@ -77,7 +77,23 @@ function MainApp() {
   const [saving, setSaving] = useState(false)
   const [autoSaved, setAutoSaved] = useState(false)
 
+  // API URL configuration
+  // In production, you need to deploy your backend somewhere (e.g., Heroku, Railway, Render)
+  // and update this URL accordingly
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+
+  // Show warning in console if API URL might be misconfigured
+  useEffect(() => {
+    if (window.location.hostname !== 'localhost' &&
+        window.location.hostname !== '127.0.0.1' &&
+        API_URL.includes('localhost')) {
+      console.warn('⚠️ API URL is set to localhost but app is running in production!')
+      console.warn('To fix this:')
+      console.warn('1. Deploy your backend to a service like Heroku, Railway, or Render')
+      console.warn('2. Create a .env.production file with VITE_API_URL=https://your-backend-url.com')
+      console.warn('3. Rebuild and redeploy the frontend')
+    }
+  }, [])
 
   // Listen to Firebase auth state changes
   useEffect(() => {

@@ -614,6 +614,34 @@ body {
 }
 
 @media (max-width: 768px) {
+  /* Upload/Analyze bar */
+  .upload-card-horizontal {
+    flex-wrap: wrap;
+    padding: 1rem;
+    gap: 0.75rem;
+  }
+
+  .select-compact {
+    width: 100%;
+    min-width: unset;
+  }
+
+  .file-label-compact {
+    width: 100%;
+    flex: unset;
+  }
+
+  .file-button-compact {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .analyze-button-compact {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Welcome section */
   .welcome-section {
     padding: 1.5rem 1rem;
   }
