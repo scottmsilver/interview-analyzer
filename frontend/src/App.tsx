@@ -386,6 +386,59 @@ function MainApp() {
           </button>
         </div>
 
+        {!analysis && !analyzing && (
+          <div className="welcome-section">
+            <div className="welcome-illustration">
+              <svg width="120" height="80" viewBox="0 0 120 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+                {/* Simple coffee cup */}
+                <path d="M35 40 L35 55 Q35 60 40 60 L55 60 Q60 60 60 55 L60 40 L35 40 Z"
+                      stroke="#c77a4b" strokeWidth="1.5" fill="none" opacity="0.6"/>
+                <path d="M60 45 Q63 45 63 48 Q63 51 60 51"
+                      stroke="#c77a4b" strokeWidth="1.5" fill="none" opacity="0.6"/>
+                {/* Steam lines */}
+                <path d="M42 35 Q43 32 42 29" stroke="#d4a574" strokeWidth="1" opacity="0.4" fill="none"/>
+                <path d="M48 35 Q47 32 48 29" stroke="#d4a574" strokeWidth="1" opacity="0.4" fill="none"/>
+                <path d="M54 35 Q55 32 54 29" stroke="#d4a574" strokeWidth="1" opacity="0.4" fill="none"/>
+                {/* Simple plant */}
+                <line x1="80" y1="60" x2="80" y2="50" stroke="#738c5f" strokeWidth="1.5" opacity="0.5"/>
+                <circle cx="80" cy="48" r="3" stroke="#738c5f" strokeWidth="1.5" fill="none" opacity="0.5"/>
+                <circle cx="76" cy="45" r="2" stroke="#738c5f" strokeWidth="1.5" fill="none" opacity="0.5"/>
+                <circle cx="84" cy="45" r="2" stroke="#738c5f" strokeWidth="1.5" fill="none" opacity="0.5"/>
+              </svg>
+            </div>
+            <h2 className="welcome-title">Welcome to Your Interview Analysis Journey</h2>
+            <p className="welcome-message">
+              Take a deep breath. You've got this!
+            </p>
+            <p className="welcome-subtitle">
+              Upload your interview transcript above for thoughtful, constructive feedback.
+              Analysis takes about 2 minutes.
+            </p>
+            <div className="welcome-tips">
+              <div className="tip">
+                <svg className="tip-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M14 5L6 13L2 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <span className="tip-text">Upload text or PDF</span>
+              </div>
+              <div className="tip">
+                <svg className="tip-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5"/>
+                  <circle cx="8" cy="8" r="2" fill="currentColor"/>
+                </svg>
+                <span className="tip-text">Company-specific insights</span>
+              </div>
+              <div className="tip">
+                <svg className="tip-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M8 2V10M8 10L5 7M8 10L11 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M2 14H14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+                <span className="tip-text">Actionable feedback</span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="error-box">
             {error}
