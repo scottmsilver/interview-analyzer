@@ -311,9 +311,6 @@ function CoffeeAroma() {
     const cupCenterX = canvas.width / 2
     const cupTopY = 90 // Position at the cup rim (y=35 in viewBox, scaled to canvas)
 
-    // Narrow the starting spread for center emission
-    const cupOpeningWidth = 8 // Tighter starting point
-
     class Swirl {
       trail: Array<{ x: number; y: number }>
       maxTrailLength: number
@@ -439,7 +436,6 @@ function CoffeeAroma() {
 
 function MainApp() {
   const navigate = useNavigate()
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const [user, setUser] = useState<User | null>(null)
   const [userApproval, setUserApproval] = useState<UserApproval | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
