@@ -74,12 +74,12 @@ export function AnalysisView() {
     checkAdmin()
   }, [analysisId])
 
-  // Auto-dismiss toast after 3 seconds
+  // Auto-dismiss toast quickly (1.5 seconds)
   useEffect(() => {
     if (toastMessage) {
       const timer = setTimeout(() => {
         setToastMessage('')
-      }, 3000)
+      }, 1500)
       return () => clearTimeout(timer)
     }
   }, [toastMessage])

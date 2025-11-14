@@ -47,46 +47,53 @@ function LogEntry({ log }: { log: { content: string, raw: any } }) {
         const [, messageType, rest] = match
         const cleanType = messageType.toLowerCase()
 
-        if (cleanType === 'system:init' || cleanType === 'system') {
+        if (cleanType === 'system:init') {
           return {
-            formatted: 'System initialized',
-            type: 'system'
+            formatted: '→ System: Initializing agent...',
+            type: 'system-request'
           }
         } else if (cleanType === 'system message' || cleanType === 'system') {
           return {
-            formatted: 'System message received',
-            type: 'system'
+            formatted: '→ System: Processing request...',
+            type: 'system-request'
           }
         } else if (cleanType === 'assistant') {
+          const message = rest?.trim()
+          if (message?.toLowerCase().includes('tool') || message?.toLowerCase().includes('search')) {
+            return {
+              formatted: `→ Agent: ${message || 'Preparing to execute tools...'}`,
+              type: 'agent-thinking'
+            }
+          }
           return {
-            formatted: rest?.trim() || 'Agent processing...',
-            type: 'assistant'
+            formatted: `→ Agent: ${message || 'Processing...'}`,
+            type: 'agent-response'
           }
         } else if (cleanType.includes('error')) {
           return {
-            formatted: `Error: ${rest?.trim() || messageType}`,
+            formatted: `⚠ Error: ${rest?.trim() || messageType}`,
             type: 'error'
           }
         } else if (cleanType === 'user message from sdk') {
           return {
-            formatted: 'User input processed',
-            type: 'system'
+            formatted: '→ System: Request received',
+            type: 'system-request'
           }
         } else if (cleanType === 'streaming...' || cleanType === 'stream_delta') {
           return {
-            formatted: 'Streaming response...',
-            type: 'thinking'
+            formatted: '← Agent: Composing response...',
+            type: 'agent-response'
           }
         } else if (cleanType.includes('tool progress')) {
           return {
-            formatted: rest?.trim() || 'Tool executing...',
-            type: 'processing'
+            formatted: `  ↳ ${rest?.trim() || 'Executing...'}`,
+            type: 'tool-execution'
           }
         } else {
-          // For other bracketed messages, clean them up
+          // For other bracketed messages, show as system
           return {
-            formatted: messageType.replace(/:/g, ' ').replace(/_/g, ' '),
-            type: 'system'
+            formatted: `→ System: ${messageType.replace(/:/g, ' ').replace(/_/g, ' ')}`,
+            type: 'system-request'
           }
         }
       }
@@ -99,13 +106,13 @@ function LogEntry({ log }: { log: { content: string, raw: any } }) {
         // Truncate long results
         const preview = content.slice(0, 60)
         return {
-          formatted: `→ Result: ${preview}${content.length > 60 ? '...' : ''}`,
-          type: 'result'
+          formatted: `  ✓ Result: ${preview}${content.length > 60 ? '...' : ''}`,
+          type: 'tool-result'
         }
       }
       return {
-        formatted: `→ Result received`,
-        type: 'result'
+        formatted: `  ✓ Result received`,
+        type: 'tool-result'
       }
     }
 
@@ -135,53 +142,53 @@ function LogEntry({ log }: { log: { content: string, raw: any } }) {
       switch (tool) {
         case 'WebSearch':
           return {
-            formatted: `WebSearch("${input.query || 'web search'}")`,
-            type: 'tool'
+            formatted: `  ↳ Executing: WebSearch("${input.query || 'web search'}")`,
+            type: 'tool-execution'
           }
         case 'WebFetch':
           return {
-            formatted: `WebFetch(${input.url ? new URL(input.url).hostname : 'webpage'})`,
-            type: 'tool'
+            formatted: `  ↳ Executing: WebFetch(${input.url ? new URL(input.url).hostname : 'webpage'})`,
+            type: 'tool-execution'
           }
         case 'Read':
           return {
-            formatted: `Read(${input.file_path ? input.file_path.split('/').pop() : 'file'})`,
-            type: 'tool'
+            formatted: `  ↳ Executing: Read(${input.file_path ? input.file_path.split('/').pop() : 'file'})`,
+            type: 'tool-execution'
           }
         case 'Write':
           return {
-            formatted: `Write(${input.file_path ? input.file_path.split('/').pop() : 'file'})`,
-            type: 'tool'
+            formatted: `  ↳ Executing: Write(${input.file_path ? input.file_path.split('/').pop() : 'file'})`,
+            type: 'tool-execution'
           }
         case 'Edit':
           return {
-            formatted: `Edit(${input.file_path ? input.file_path.split('/').pop() : 'file'})`,
-            type: 'tool'
+            formatted: `  ↳ Executing: Edit(${input.file_path ? input.file_path.split('/').pop() : 'file'})`,
+            type: 'tool-execution'
           }
         case 'Bash':
           return {
-            formatted: `Bash(${input.command ? input.command.slice(0, 40) : 'command'})`,
-            type: 'tool'
+            formatted: `  ↳ Executing: Bash(${input.command ? input.command.slice(0, 40) : 'command'})`,
+            type: 'tool-execution'
           }
         case 'TodoWrite':
           return {
-            formatted: `TodoWrite(updating task list)`,
-            type: 'tool'
+            formatted: `  ↳ Executing: TodoWrite(updating task list)`,
+            type: 'tool-execution'
           }
         case 'Grep':
           return {
-            formatted: `Grep("${input.pattern || 'pattern'}")`,
-            type: 'tool'
+            formatted: `  ↳ Executing: Grep("${input.pattern || 'pattern'}")`,
+            type: 'tool-execution'
           }
         case 'Glob':
           return {
-            formatted: `Glob(${input.pattern || 'pattern'})`,
-            type: 'tool'
+            formatted: `  ↳ Executing: Glob(${input.pattern || 'pattern'})`,
+            type: 'tool-execution'
           }
         default:
           return {
-            formatted: `${tool}(${input.description || JSON.stringify(input).slice(0, 30)})`,
-            type: 'tool'
+            formatted: `  ↳ Executing: ${tool}(${input.description || JSON.stringify(input).slice(0, 30)})`,
+            type: 'tool-execution'
           }
       }
     }
@@ -203,9 +210,14 @@ function LogEntry({ log }: { log: { content: string, raw: any } }) {
   // If we successfully parsed a message, use that
   if (toolParsed) {
     const cssClass = toolParsed.type === 'tool' ? 'log-entry-tool' :
+                     toolParsed.type === 'tool-execution' ? 'log-entry-tool-execution' :
+                     toolParsed.type === 'tool-result' ? 'log-entry-tool-result' :
                      toolParsed.type === 'result' ? 'log-entry-result' :
                      toolParsed.type === 'text' ? 'log-entry-text' :
                      toolParsed.type === 'thinking' ? 'log-entry-thinking' :
+                     toolParsed.type === 'system-request' ? 'log-entry-system-request' :
+                     toolParsed.type === 'agent-response' ? 'log-entry-agent-response' :
+                     toolParsed.type === 'agent-thinking' ? 'log-entry-agent-thinking' :
                      toolParsed.type === 'system' ? 'log-entry-system' :
                      toolParsed.type === 'assistant' ? 'log-entry-assistant' :
                      toolParsed.type === 'error' ? 'log-entry-error' : 'log-entry'
@@ -296,6 +308,7 @@ function MainApp() {
   const [agentLogs, setAgentLogs] = useState<{content: string, raw: any}[]>([])
   const [showLogs, setShowLogs] = useState(true)
   const [autoSaved, setAutoSaved] = useState(false)
+  const [savedAnalysisId, setSavedAnalysisId] = useState<string | null>(null)
   const [showPasteDialog, setShowPasteDialog] = useState(false)
   const [pastedText, setPastedText] = useState('')
   const [toastMessage, setToastMessage] = useState('')
@@ -376,34 +389,31 @@ function MainApp() {
     return () => unsubscribe()
   }, [])
 
-  // Auto-save when analysis is complete and navigate to view
+  // Auto-save when analysis is complete but don't navigate
   useEffect(() => {
     if (analysis && !analyzing && user && file && !autoSaved) {
       // Wait a bit to ensure the analysis is fully loaded
       const timer = setTimeout(async () => {
         const docId = await saveAnalysis(true)
         setAutoSaved(true)
+        setSavedAnalysisId(docId)
         // Show auto-save message briefly
         setStatusMessage('✅ Auto-saved to history')
         setTimeout(() => {
           setStatusMessage('')
-          // Navigate to the analysis view
-          if (docId) {
-            navigate(`/analysis/${docId}`)
-          }
         }, 2000)
       }, 1000)
 
       return () => clearTimeout(timer)
     }
-  }, [analysis, analyzing, user, file, autoSaved, navigate])
+  }, [analysis, analyzing, user, file, autoSaved])
 
-  // Auto-dismiss toast after 3 seconds
+  // Auto-dismiss toast quickly (1.5 seconds)
   useEffect(() => {
     if (toastMessage) {
       const timer = setTimeout(() => {
         setToastMessage('')
-      }, 3000)
+      }, 1500)
       return () => clearTimeout(timer)
     }
   }, [toastMessage])
@@ -514,6 +524,7 @@ function MainApp() {
     setConnectionStatus('connecting')
     setAgentLogs([])
     setAutoSaved(false)  // Reset auto-save flag for new analysis
+    setSavedAnalysisId(null)  // Reset saved analysis ID
 
     const formData = new FormData()
     formData.append('transcript', file)
@@ -843,6 +854,20 @@ function MainApp() {
             <div className="results-actions">
               {statusMessage && (
                 <span className="auto-saved-indicator">{statusMessage}</span>
+              )}
+              {savedAnalysisId && (
+                <button
+                  onClick={() => navigate(`/analysis/${savedAnalysisId}`)}
+                  className="view-analysis-button"
+                  title="View saved analysis"
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M10 2H14V6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M14 2L7 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M12 9V14H2V4H7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  <span>View Analysis</span>
+                </button>
               )}
               <button
                 onClick={() => {

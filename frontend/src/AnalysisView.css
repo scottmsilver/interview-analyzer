@@ -93,18 +93,20 @@
   transform: translateX(-50%);
   background: white;
   color: #2a2a2a;
-  padding: 0.35rem 0.6rem;
-  border-radius: 14px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08),
-              0 1px 3px rgba(0, 0, 0, 0.12);
-  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08),
+              0 1px 2px rgba(0, 0, 0, 0.1);
+  font-size: 0.7rem;
   font-weight: 500;
   z-index: 2000;
   display: inline-block;
-  animation: slideDown 0.3s ease-out,
-             fadeOut 0.2s ease-out 2.8s forwards;
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  animation: slideDown 0.2s ease-out,
+             fadeOut 0.15s ease-out 1.3s forwards;
+  border: 1px solid rgba(0, 0, 0, 0.05);
   line-height: 1;
+  white-space: nowrap;
+  max-width: fit-content;
 }
 
 @keyframes slideDown {
