@@ -1,73 +1,57 @@
-# React + TypeScript + Vite
+# Interview Analyzer - Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React frontend for the PM Interview Analyzer.
 
-Currently, two official plugins are available:
+## Setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
 
-## React Compiler
+2. **Configure environment (optional):**
+   ```bash
+   cp .env.example .env
+   ```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+   Edit `.env` if you need to change the backend API URL (default: `http://localhost:3001`).
 
-## Expanding the ESLint configuration
+3. **Run in development mode:**
+   ```bash
+   npm run dev
+   ```
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+   The app will be available at `http://localhost:5173`
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+4. **Build for production:**
+   ```bash
+   npm run build
+   ```
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## Features
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- 📤 **File Upload**: Upload transcript files (.txt format)
+- 🎯 **Interview Type Selection**: Choose from Google APM, Meta PM, Amazon PM, or Generic PM
+- ⚡ **Real-time Streaming**: See analysis results as they're generated
+- 📊 **Beautiful Markdown Rendering**: Results displayed with syntax highlighting
+- 📋 **Copy to Clipboard**: Easy sharing of analysis results
+- 📱 **Responsive Design**: Works on desktop and mobile
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Usage
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+1. Select your interview type from the dropdown
+2. Upload a transcript file (.txt)
+3. Click "Analyze Interview"
+4. Watch the real-time analysis appear
+5. Copy or save the results
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Technology Stack
+
+- **React** with TypeScript
+- **Vite** for fast development
+- **react-markdown** for rendering analysis
+- **Server-Sent Events (SSE)** for streaming
+
+## API Integration
+
+The frontend communicates with the backend API at `/api/analyze/stream` endpoint, which uses Server-Sent Events to stream analysis results in real-time.
