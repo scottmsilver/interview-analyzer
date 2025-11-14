@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Background circle -->
+  <circle cx="16" cy="16" r="16" fill="#c77a4b"/>
+
+  <!-- Document/Transcript icon -->
+  <rect x="9" y="7" width="14" height="18" rx="1.5" fill="white" opacity="0.95"/>
+
+  <!-- Text lines representing transcript -->
+  <line x1="11.5" y1="10.5" x2="20.5" y2="10.5" stroke="#c77a4b" stroke-width="1.2" stroke-linecap="round"/>
+  <line x1="11.5" y1="13.5" x2="20.5" y2="13.5" stroke="#c77a4b" stroke-width="1.2" stroke-linecap="round"/>
+  <line x1="11.5" y1="16.5" x2="18" y2="16.5" stroke="#c77a4b" stroke-width="1.2" stroke-linecap="round"/>
+
+  <!-- Checkmark (analysis complete) -->
+  <path d="M 11 20 L 14 23 L 21 16" fill="none" stroke="#738c5f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
