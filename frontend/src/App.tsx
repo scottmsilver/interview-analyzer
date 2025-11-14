@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -293,8 +293,153 @@ function LogEntry({ log }: { log: { content: string, raw: any } }) {
   )
 }
 
+// Coffee Aroma Animation Component
+function CoffeeAroma() {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    // Set canvas size
+    canvas.width = 280
+    canvas.height = 210
+
+    const cupCenterX = canvas.width / 2
+    const cupTopY = 90 // Position at the cup rim (y=35 in viewBox, scaled to canvas)
+
+    // Narrow the starting spread for center emission
+    const cupOpeningWidth = 8 // Tighter starting point
+
+    class Swirl {
+      trail: Array<{ x: number; y: number }>
+      maxTrailLength: number
+      yPos: number
+      angle: number
+      frameCount: number
+      speedFactor: number
+      startX: number
+      resetThreshold: number
+
+      constructor(startXOffset: number, initialAngle: number, speedFactor: number) {
+        this.trail = []
+        this.maxTrailLength = 150
+        this.yPos = cupTopY
+        this.angle = initialAngle
+        this.frameCount = 0
+        this.speedFactor = speedFactor
+        // Start closer to center for tighter emission point
+        this.startX = cupCenterX + (startXOffset * 0.3)
+        this.resetThreshold = 50 // Top of visible area
+      }
+
+      update() {
+        this.frameCount++
+
+        // Calculate distance ratio for ease-out effect
+        const distanceRatio = (this.yPos - this.resetThreshold) / (cupTopY - this.resetThreshold)
+
+        // Slow down dramatically as it rises (cubic ease-out for more natural deceleration)
+        const easeOutSpeed = 0.08 + (0.4 * distanceRatio * distanceRatio * distanceRatio)
+        this.yPos -= easeOutSpeed * this.speedFactor
+
+        // Reset when reaching top
+        if (this.yPos < this.resetThreshold) {
+          this.yPos = cupTopY
+          this.trail = []
+          this.frameCount = 0
+        }
+
+        // Swirl math with dramatic S-curves (slowed down)
+        const time = this.frameCount * 0.02 * this.speedFactor
+        const amplitude = Math.sin(time * 0.5) * 15 + 25
+        this.angle += 0.025 * this.speedFactor
+
+        const xPos = this.startX + Math.sin(this.angle) * amplitude
+
+        // Add new position to trail
+        this.trail.push({ x: xPos, y: this.yPos })
+
+        // Maintain max length
+        if (this.trail.length > this.maxTrailLength) {
+          this.trail.shift()
+        }
+      }
+
+      draw(context: CanvasRenderingContext2D) {
+        if (this.trail.length < 2) return
+
+        context.lineCap = 'round'
+
+        for (let i = 1; i < this.trail.length; i++) {
+          const p = this.trail[i]
+
+          // Fade along the curve
+          const trailOpacity = i / this.trail.length
+
+          // Depth effect: thinner/lighter near center
+          const deviation = Math.abs(p.x - cupCenterX)
+          const maxDeviation = 60
+          const depthFactor = 1 - Math.min(1, deviation / maxDeviation)
+
+          // Line width and opacity with depth and trail fade
+          const finalLineWidth = (0.8 + 1.5 * (1 - depthFactor)) * trailOpacity
+          const depthOpacity = (0.5 + 0.4 * (1 - depthFactor))
+          const finalOpacity = depthOpacity * trailOpacity
+
+          // Use terracotta color
+          context.strokeStyle = `rgba(199, 122, 75, ${finalOpacity})`
+          context.lineWidth = finalLineWidth
+
+          context.beginPath()
+          context.moveTo(this.trail[i - 1].x, this.trail[i - 1].y)
+          context.lineTo(p.x, p.y)
+          context.stroke()
+        }
+      }
+    }
+
+    // Create multiple swirls with slower speeds
+    const swirls = [
+      new Swirl(0, 0, 0.8),
+      new Swirl(-12, Math.PI / 2, 0.9),
+      new Swirl(12, Math.PI, 0.7)
+    ]
+
+    let animationId: number
+
+    function animate() {
+      if (!ctx || !canvas) return
+
+      // Clear with low opacity for trail effect
+      ctx.fillStyle = 'rgba(253, 252, 251, 0.15)'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+      // Update and draw all swirls
+      swirls.forEach(swirl => {
+        swirl.update()
+        swirl.draw(ctx)
+      })
+
+      animationId = requestAnimationFrame(animate)
+    }
+
+    animate()
+
+    return () => {
+      cancelAnimationFrame(animationId)
+    }
+  }, [])
+
+  return <canvas ref={canvasRef} className="coffee-canvas" />
+}
+
 function MainApp() {
   const navigate = useNavigate()
+  const canvasRef = useRef<HTMLCanvasElement>(null)
   const [user, setUser] = useState<User | null>(null)
   const [userApproval, setUserApproval] = useState<UserApproval | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
@@ -736,22 +881,38 @@ function MainApp() {
         {!analysis && !analyzing && (
           <div className="welcome-section">
             <div className="welcome-illustration">
-              <svg width="120" height="80" viewBox="0 0 120 80" fill="none" xmlns="http://www.w3.org/2000/svg">
-                {/* Simple coffee cup */}
-                <path d="M35 40 L35 55 Q35 60 40 60 L55 60 Q60 60 60 55 L60 40 L35 40 Z"
-                      stroke="#c77a4b" strokeWidth="1.5" fill="none" opacity="0.6"/>
-                <path d="M60 45 Q63 45 63 48 Q63 51 60 51"
-                      stroke="#c77a4b" strokeWidth="1.5" fill="none" opacity="0.6"/>
-                {/* Steam lines */}
-                <path d="M42 35 Q43 32 42 29" stroke="#d4a574" strokeWidth="1" opacity="0.4" fill="none"/>
-                <path d="M48 35 Q47 32 48 29" stroke="#d4a574" strokeWidth="1" opacity="0.4" fill="none"/>
-                <path d="M54 35 Q55 32 54 29" stroke="#d4a574" strokeWidth="1" opacity="0.4" fill="none"/>
-                {/* Simple plant */}
-                <line x1="80" y1="60" x2="80" y2="50" stroke="#738c5f" strokeWidth="1.5" opacity="0.5"/>
-                <circle cx="80" cy="48" r="3" stroke="#738c5f" strokeWidth="1.5" fill="none" opacity="0.5"/>
-                <circle cx="76" cy="45" r="2" stroke="#738c5f" strokeWidth="1.5" fill="none" opacity="0.5"/>
-                <circle cx="84" cy="45" r="2" stroke="#738c5f" strokeWidth="1.5" fill="none" opacity="0.5"/>
-              </svg>
+              <div className="coffee-cup-container">
+                <svg className="coffee-cup-svg" width="280" height="210" viewBox="0 0 120 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  {/* Narrow coffee cup - centered on mouth, taller */}
+                  {/* Cup body - taller bowl shape */}
+                  <path d="M45 35 Q43 48 46 58 L74 58 Q77 48 75 35 Z"
+                        stroke="#c77a4b" strokeWidth="1.2" fill="none" opacity="0.6"/>
+
+                  {/* Cup rim - front arc only */}
+                  <path d="M45 35 Q60 37 75 35" stroke="#c77a4b" strokeWidth="1" fill="none" opacity="0.6"/>
+
+                  {/* Elegant handle */}
+                  <path d="M75 40 Q81 40 81 46 Q81 52 75 52"
+                        stroke="#c77a4b" strokeWidth="1.2" fill="none" opacity="0.6" strokeLinecap="round"/>
+
+                  {/* Saguaro cactus - BIG, to the right */}
+                  {/* Main tall trunk */}
+                  <path d="M94 58 L94 18" stroke="#738c5f" strokeWidth="7" fill="none" opacity="0.55" strokeLinecap="round"/>
+                  <path d="M106 58 L106 18" stroke="#738c5f" strokeWidth="7" fill="none" opacity="0.55" strokeLinecap="round"/>
+
+                  {/* Smaller left arm (higher up) */}
+                  <path d="M94 32 Q88 32 88 26 L88 22" stroke="#738c5f" strokeWidth="5" fill="none" opacity="0.55" strokeLinecap="round"/>
+
+                  {/* Bigger right arm (lower and longer) */}
+                  <path d="M106 38 Q112 38 112 32 L112 24" stroke="#738c5f" strokeWidth="5.5" fill="none" opacity="0.55" strokeLinecap="round"/>
+
+                  {/* Subtle spines as dots - sparse */}
+                  <circle cx="100" cy="24" r="0.6" fill="#738c5f" opacity="0.35"/>
+                  <circle cx="100" cy="32" r="0.6" fill="#738c5f" opacity="0.35"/>
+                  <circle cx="100" cy="40" r="0.6" fill="#738c5f" opacity="0.35"/>
+                </svg>
+                <CoffeeAroma />
+              </div>
             </div>
             <h2 className="welcome-title">Welcome to Your Interview Analysis Journey</h2>
             <p className="welcome-message">

@@ -567,14 +567,32 @@ body {
 }
 
 .welcome-illustration {
-  margin: 0 auto 1rem;
-  animation: float 6s ease-in-out infinite;
-  opacity: 0.8;
+  margin: 0 auto 1.5rem;
+  opacity: 0.85;
 }
 
-@keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-5px); }
+.coffee-cup-container {
+  position: relative;
+  width: 280px;
+  height: 210px;
+  margin: 0 auto;
+}
+
+.coffee-cup-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.coffee-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  display: block;
+  border-radius: 8px;
 }
 
 .welcome-title {
