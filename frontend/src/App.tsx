@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
@@ -38,21 +38,243 @@ interface UserApproval {
 function LogEntry({ log }: { log: { content: string, raw: any } }) {
   const [showRaw, setShowRaw] = useState(false)
 
+  // Parse and format tool use messages
+  const parseToolUse = (raw: any, content: string) => {
+    // Handle bracketed system messages
+    if (content.startsWith('[') && content.includes(']')) {
+      const match = content.match(/^\[(.*?)\](.*)/)
+      if (match) {
+        const [, messageType, rest] = match
+        const cleanType = messageType.toLowerCase()
+
+        if (cleanType === 'system:init' || cleanType === 'system') {
+          return {
+            formatted: 'System initialized',
+            type: 'system'
+          }
+        } else if (cleanType === 'system message' || cleanType === 'system') {
+          return {
+            formatted: 'System message received',
+            type: 'system'
+          }
+        } else if (cleanType === 'assistant') {
+          return {
+            formatted: rest?.trim() || 'Agent processing...',
+            type: 'assistant'
+          }
+        } else if (cleanType.includes('error')) {
+          return {
+            formatted: `Error: ${rest?.trim() || messageType}`,
+            type: 'error'
+          }
+        } else if (cleanType === 'user message from sdk') {
+          return {
+            formatted: 'User input processed',
+            type: 'system'
+          }
+        } else if (cleanType === 'streaming...' || cleanType === 'stream_delta') {
+          return {
+            formatted: 'Streaming response...',
+            type: 'thinking'
+          }
+        } else if (cleanType.includes('tool progress')) {
+          return {
+            formatted: rest?.trim() || 'Tool executing...',
+            type: 'processing'
+          }
+        } else {
+          // For other bracketed messages, clean them up
+          return {
+            formatted: messageType.replace(/:/g, ' ').replace(/_/g, ' '),
+            type: 'system'
+          }
+        }
+      }
+    }
+
+    // Handle tool_result messages
+    if (raw?.type === 'tool_result') {
+      const content = raw.content || raw.result || ''
+      if (typeof content === 'string') {
+        // Truncate long results
+        const preview = content.slice(0, 60)
+        return {
+          formatted: `→ Result: ${preview}${content.length > 60 ? '...' : ''}`,
+          type: 'result'
+        }
+      }
+      return {
+        formatted: `→ Result received`,
+        type: 'result'
+      }
+    }
+
+    // Handle text messages
+    if (raw?.type === 'text' && raw?.text) {
+      const text = raw.text.slice(0, 80)
+      return {
+        formatted: `Agent: ${text}${raw.text.length > 80 ? '...' : ''}`,
+        type: 'text'
+      }
+    }
+
+    // Handle thinking messages
+    if (raw?.type === 'thinking' || (typeof raw === 'string' && raw.includes('thinking'))) {
+      return {
+        formatted: `Thinking...`,
+        type: 'thinking'
+      }
+    }
+
+    // Handle tool_use messages
+    if (raw?.type === 'tool_use' && raw?.tool) {
+      const tool = raw.tool
+      const input = raw.input || {}
+
+      // Format based on tool type
+      switch (tool) {
+        case 'WebSearch':
+          return {
+            formatted: `WebSearch("${input.query || 'web search'}")`,
+            type: 'tool'
+          }
+        case 'WebFetch':
+          return {
+            formatted: `WebFetch(${input.url ? new URL(input.url).hostname : 'webpage'})`,
+            type: 'tool'
+          }
+        case 'Read':
+          return {
+            formatted: `Read(${input.file_path ? input.file_path.split('/').pop() : 'file'})`,
+            type: 'tool'
+          }
+        case 'Write':
+          return {
+            formatted: `Write(${input.file_path ? input.file_path.split('/').pop() : 'file'})`,
+            type: 'tool'
+          }
+        case 'Edit':
+          return {
+            formatted: `Edit(${input.file_path ? input.file_path.split('/').pop() : 'file'})`,
+            type: 'tool'
+          }
+        case 'Bash':
+          return {
+            formatted: `Bash(${input.command ? input.command.slice(0, 40) : 'command'})`,
+            type: 'tool'
+          }
+        case 'TodoWrite':
+          return {
+            formatted: `TodoWrite(updating task list)`,
+            type: 'tool'
+          }
+        case 'Grep':
+          return {
+            formatted: `Grep("${input.pattern || 'pattern'}")`,
+            type: 'tool'
+          }
+        case 'Glob':
+          return {
+            formatted: `Glob(${input.pattern || 'pattern'})`,
+            type: 'tool'
+          }
+        default:
+          return {
+            formatted: `${tool}(${input.description || JSON.stringify(input).slice(0, 30)})`,
+            type: 'tool'
+          }
+      }
+    }
+
+    // Check if it's a simple "Using tool" message
+    if (typeof log.content === 'string' && log.content.startsWith('Using tool:')) {
+      const toolName = log.content.replace('Using tool:', '').trim()
+      return {
+        formatted: `${toolName}()`,
+        type: 'tool'
+      }
+    }
+
+    return null
+  }
+
+  const toolParsed = parseToolUse(log.raw, log.content)
+
+  // If we successfully parsed a message, use that
+  if (toolParsed) {
+    const cssClass = toolParsed.type === 'tool' ? 'log-entry-tool' :
+                     toolParsed.type === 'result' ? 'log-entry-result' :
+                     toolParsed.type === 'text' ? 'log-entry-text' :
+                     toolParsed.type === 'thinking' ? 'log-entry-thinking' :
+                     toolParsed.type === 'system' ? 'log-entry-system' :
+                     toolParsed.type === 'assistant' ? 'log-entry-assistant' :
+                     toolParsed.type === 'error' ? 'log-entry-error' : 'log-entry'
+
+    return (
+      <div className="log-entry-wrapper">
+        <div className={`log-entry ${cssClass}`}>
+          <span className="log-entry-content">{toolParsed.formatted}</span>
+          <button
+            className="raw-toggle"
+            onClick={() => setShowRaw(!showRaw)}
+            title={showRaw ? "Hide details" : "Show details"}
+          >
+            {showRaw ? '−' : '+'}
+          </button>
+        </div>
+        {showRaw && (
+          <div className="raw-data">
+            <pre>{JSON.stringify(log.raw, null, 2)}</pre>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Original logic for non-tool messages
+  const getMessageType = (content: string) => {
+    const lowerContent = content.toLowerCase()
+    if (lowerContent.includes('error') || lowerContent.includes('failed')) return 'error'
+    if (lowerContent.includes('success') || lowerContent.includes('complete')) return 'success'
+    if (lowerContent.includes('analyzing') || lowerContent.includes('processing')) return 'processing'
+    if (lowerContent.includes('waiting') || lowerContent.includes('connecting')) return 'waiting'
+    if (lowerContent.includes('thinking') || lowerContent.includes('evaluating')) return 'thinking'
+    if (lowerContent.includes('found') || lowerContent.includes('detected')) return 'found'
+    return 'default'
+  }
+
+  const messageType = getMessageType(log.content)
+
+  // Format the content for better readability
+  const formatContent = (content: string) => {
+    // Add line breaks after periods followed by capital letters
+    return content.replace(/\. ([A-Z])/g, '.\n$1')
+  }
+
   return (
     <div className="log-entry-wrapper">
-      <div className="log-entry">
-        {log.content}
+      <div className={`log-entry log-entry-${messageType}`}>
+        <span className="log-entry-icon">
+          {messageType === 'error' && '×'}
+          {messageType === 'success' && '✓'}
+          {messageType === 'processing' && '•'}
+          {messageType === 'waiting' && '◦'}
+          {messageType === 'thinking' && '•'}
+          {messageType === 'found' && '→'}
+          {messageType === 'default' && '▸'}
+        </span>
+        <span className="log-entry-content">{formatContent(log.content)}</span>
         <button
           className="raw-toggle"
           onClick={() => setShowRaw(!showRaw)}
-          title={showRaw ? "Hide raw data" : "Show raw data"}
+          title={showRaw ? "Hide details" : "Show details"}
         >
-          {showRaw ? '▼' : '▶'} raw
+          {showRaw ? '−' : '+'}
         </button>
       </div>
       {showRaw && (
         <div className="raw-data">
-          {JSON.stringify(log.raw, null, 2)}
+          <pre>{JSON.stringify(log.raw, null, 2)}</pre>
         </div>
       )}
     </div>
@@ -60,6 +282,7 @@ function LogEntry({ log }: { log: { content: string, raw: any } }) {
 }
 
 function MainApp() {
+  const navigate = useNavigate()
   const [user, setUser] = useState<User | null>(null)
   const [userApproval, setUserApproval] = useState<UserApproval | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
@@ -72,10 +295,14 @@ function MainApp() {
   const [statusMessage, setStatusMessage] = useState('')
   const [agentLogs, setAgentLogs] = useState<{content: string, raw: any}[]>([])
   const [showLogs, setShowLogs] = useState(true)
-  const [showSaveDialog, setShowSaveDialog] = useState(false)
-  const [saveTitle, setSaveTitle] = useState('')
-  const [saving, setSaving] = useState(false)
   const [autoSaved, setAutoSaved] = useState(false)
+  const [showPasteDialog, setShowPasteDialog] = useState(false)
+  const [pastedText, setPastedText] = useState('')
+  const [toastMessage, setToastMessage] = useState('')
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'thinking' | 'waiting'>('idle')
+  const [, setLastHeartbeat] = useState(Date.now()) // Used for triggering re-renders for heartbeat animation
+  const [waitingStartTime, setWaitingStartTime] = useState<number | null>(null)
+  const [waitingDuration, setWaitingDuration] = useState(0)
 
   // API URL configuration
   // In production, you need to deploy your backend somewhere (e.g., Heroku, Railway, Render)
@@ -149,23 +376,64 @@ function MainApp() {
     return () => unsubscribe()
   }, [])
 
-  // Auto-save when analysis is complete
+  // Auto-save when analysis is complete and navigate to view
   useEffect(() => {
     if (analysis && !analyzing && user && file && !autoSaved) {
       // Wait a bit to ensure the analysis is fully loaded
-      const timer = setTimeout(() => {
-        saveAnalysis(true)
+      const timer = setTimeout(async () => {
+        const docId = await saveAnalysis(true)
         setAutoSaved(true)
         // Show auto-save message briefly
         setStatusMessage('✅ Auto-saved to history')
         setTimeout(() => {
           setStatusMessage('')
-        }, 3000)
+          // Navigate to the analysis view
+          if (docId) {
+            navigate(`/analysis/${docId}`)
+          }
+        }, 2000)
       }, 1000)
 
       return () => clearTimeout(timer)
     }
-  }, [analysis, analyzing, user, file, autoSaved])
+  }, [analysis, analyzing, user, file, autoSaved, navigate])
+
+  // Auto-dismiss toast after 3 seconds
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => {
+        setToastMessage('')
+      }, 3000)
+      return () => clearTimeout(timer)
+    }
+  }, [toastMessage])
+
+  // Heartbeat effect for connection status
+  useEffect(() => {
+    if (analyzing) {
+      const interval = setInterval(() => {
+        setLastHeartbeat(Date.now())
+      }, 1000)
+      return () => clearInterval(interval)
+    }
+  }, [analyzing])
+
+  // Waiting timer effect
+  useEffect(() => {
+    if (connectionStatus === 'waiting' && waitingStartTime) {
+      const interval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - waitingStartTime) / 1000)
+        setWaitingDuration(elapsed)
+      }, 1000)
+      return () => clearInterval(interval)
+    } else {
+      setWaitingDuration(0)
+    }
+  }, [connectionStatus, waitingStartTime])
+
+  const showToast = (message: string) => {
+    setToastMessage(message)
+  }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0]
@@ -176,11 +444,31 @@ function MainApp() {
     }
   }
 
-  const saveAnalysis = async (autoSave = false) => {
-    if (!user || !analysis || !file) return
+  const handlePasteSubmit = () => {
+    if (!pastedText.trim()) {
+      setError('Please paste some text')
+      return
+    }
 
-    setSaving(true)
+    // Create a File object from the pasted text
+    const blob = new Blob([pastedText], { type: 'text/plain' })
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
+    const file = new File([blob], `pasted-transcript-${timestamp}.txt`, { type: 'text/plain' })
+
+    setFile(file)
+    setError('')
+    setAnalysis('')
+    setShowPasteDialog(false)
+    setPastedText('')
+  }
+
+  const saveAnalysis = async (autoSave = false) => {
+    if (!user || !analysis || !file) return null
+
     try {
+      // Read the transcript content from the file
+      const transcriptContent = await file.text()
+
       const now = new Date()
       const dateStr = now.toLocaleDateString()
       const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -189,27 +477,27 @@ function MainApp() {
         userId: user.uid,
         interviewType,
         transcriptFileName: file.name,
+        transcriptContent, // Store the actual transcript text
         analysis,
-        title: saveTitle || `${file.name}`,
+        title: `${file.name}`,
         savedAt: `${dateStr} at ${timeStr}`,
         createdAt: now.toISOString(),
         updatedAt: now.toISOString()
       }
 
-      await addDoc(collection(db, 'analyses'), analysisData)
+      const docRef = await addDoc(collection(db, 'analyses'), analysisData)
 
       if (!autoSave) {
-        setShowSaveDialog(false)
-        setSaveTitle('')
-        alert('Analysis saved successfully!')
+        showToast('✓ Saved')
       }
+
+      return docRef.id
     } catch (err) {
       console.error('Error saving analysis:', err)
       if (!autoSave) {
-        alert('Failed to save analysis: ' + (err instanceof Error ? err.message : 'Unknown error'))
+        showToast('× Failed')
       }
-    } finally {
-      setSaving(false)
+      return null
     }
   }
 
@@ -223,6 +511,7 @@ function MainApp() {
     setAnalysis('')
     setError('')
     setStatusMessage('Connecting to AI agent...')
+    setConnectionStatus('connecting')
     setAgentLogs([])
     setAutoSaved(false)  // Reset auto-save flag for new analysis
 
@@ -271,17 +560,35 @@ function MainApp() {
                   raw: message.raw || message
                 }])
                 setStatusMessage(message.content)
+                // Update connection status based on message content
+                const lowerContent = message.content.toLowerCase()
+                if (lowerContent.includes('thinking') || lowerContent.includes('evaluating')) {
+                  setConnectionStatus('thinking')
+                  setWaitingStartTime(null)
+                } else if (lowerContent.includes('waiting')) {
+                  setConnectionStatus('waiting')
+                  if (!waitingStartTime) {
+                    setWaitingStartTime(Date.now())
+                  }
+                } else {
+                  setConnectionStatus('connected')
+                  setWaitingStartTime(null)
+                }
+                setLastHeartbeat(Date.now())
               } else if (message.type === 'result') {
                 setAnalysis(prev => prev + message.content)
                 setStatusMessage('Rendering analysis...')
+                setConnectionStatus('connected')
                 setAnalyzing(false)
                 // Auto-save will be triggered after all messages are processed
               } else if (message.type === 'complete') {
                 setAnalyzing(false)
                 setStatusMessage('Analysis complete!')
+                setConnectionStatus('idle')
               } else if (message.type === 'error') {
                 setError(message.content || 'Analysis failed')
                 setAnalyzing(false)
+                setConnectionStatus('idle')
               }
             } catch (e) {
               console.error('Parse error:', e)
@@ -294,6 +601,7 @@ function MainApp() {
       console.error('Analysis error:', err)
       setError(err instanceof Error ? err.message : 'Analysis failed')
       setAnalyzing(false)
+      setConnectionStatus('idle')
     }
   }
 
@@ -373,18 +681,30 @@ function MainApp() {
             ))}
           </select>
 
-          <label className="file-label-compact">
-            <input
-              type="file"
-              accept=".txt"
-              onChange={handleFileChange}
+          <div className="file-input-group">
+            <label className="file-label-compact">
+              <input
+                type="file"
+                accept=".txt"
+                onChange={handleFileChange}
+                disabled={analyzing}
+                className="file-input"
+              />
+              <span className="file-button-compact">
+                {file ? `✓ ${file.name}` : 'Choose file'}
+              </span>
+            </label>
+
+            <span className="file-separator">or</span>
+
+            <button
+              onClick={() => setShowPasteDialog(true)}
               disabled={analyzing}
-              className="file-input"
-            />
-            <span className="file-button-compact">
-              {file ? `✓ ${file.name}` : 'Choose transcript'}
-            </span>
-          </label>
+              className="paste-button-compact"
+            >
+              Paste text
+            </button>
+          </div>
 
           <button
             onClick={analyzeInterview}
@@ -464,24 +784,55 @@ function MainApp() {
         {agentLogs.length > 0 && (
           <div className={`thinking-flyout ${showLogs ? 'open' : 'closed'}`}>
             <div className="flyout-header">
-              <span className="flyout-title">💭 Agent Thinking ({agentLogs.length})</span>
+              <div className="flyout-title-section">
+                <span className="connection-indicator">
+                  {connectionStatus === 'connecting' && <span className="pulse-dot connecting" />}
+                  {connectionStatus === 'connected' && <span className="pulse-dot connected" />}
+                  {connectionStatus === 'thinking' && <span className="pulse-dot thinking" />}
+                  {connectionStatus === 'waiting' && <span className="pulse-dot waiting" />}
+                  {connectionStatus === 'idle' && <span className="pulse-dot idle" />}
+                </span>
+                <span className="flyout-title">
+                  {connectionStatus === 'connecting' && 'Connecting to agent...'}
+                  {connectionStatus === 'connected' && 'Talking to agent'}
+                  {connectionStatus === 'thinking' && 'Agent thinking...'}
+                  {connectionStatus === 'waiting' && (
+                    <>
+                      Waiting for agent
+                      {waitingDuration > 0 && (
+                        <span className="waiting-timer"> ({waitingDuration}s)</span>
+                      )}
+                    </>
+                  )}
+                  {connectionStatus === 'idle' && 'Agent ready'}
+                  <span className="log-count">({agentLogs.length})</span>
+                </span>
+              </div>
               <div className="flyout-actions">
-                {analyzing && statusMessage && (
-                  <span className="flyout-status">{statusMessage}</span>
-                )}
                 <button
                   onClick={() => setShowLogs(!showLogs)}
                   className="flyout-toggle"
+                  title={showLogs ? "Minimize" : "Expand"}
                 >
-                  {showLogs ? '✕' : '▶'}
+                  {showLogs ? '−' : '+'}
                 </button>
               </div>
             </div>
             {showLogs && (
               <div className="flyout-content">
-                {agentLogs.map((log, i) => (
-                  <LogEntry key={i} log={log} />
-                ))}
+                <div className="current-status">
+                  {statusMessage && (
+                    <div className="status-message">
+                      <span className="status-icon">→</span>
+                      {statusMessage}
+                    </div>
+                  )}
+                </div>
+                <div className="log-entries">
+                  {agentLogs.map((log, i) => (
+                    <LogEntry key={i} log={log} />
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -490,16 +841,9 @@ function MainApp() {
         {analysis && (
           <div className="results">
             <div className="results-actions">
-              {autoSaved && (
-                <span className="auto-saved-indicator">✅ Auto-saved</span>
+              {statusMessage && (
+                <span className="auto-saved-indicator">{statusMessage}</span>
               )}
-              <button
-                onClick={() => setShowSaveDialog(true)}
-                className="save-button"
-                title="Save analysis with custom title"
-              >
-                💾 {autoSaved ? 'Save Again' : 'Save'}
-              </button>
               <button
                 onClick={() => {
                   const markdownBody = document.querySelector('.markdown-body')
@@ -512,11 +856,11 @@ function MainApp() {
                     selection?.addRange(range)
                     document.execCommand('copy')
                     selection?.removeAllRanges()
-                    alert('Copied to clipboard!')
+                    showToast('✓ Copied')
                   } else {
                     // Fallback to markdown text
                     navigator.clipboard.writeText(analysis)
-                    alert('Copied to clipboard!')
+                    showToast('✓ Copied')
                   }
                 }}
                 className="copy-button"
@@ -540,45 +884,64 @@ function MainApp() {
           </div>
         )}
 
-      <footer className="footer">
-        Interview Analyzer
-      </footer>
-
-      {showSaveDialog && (
-        <div className="modal-overlay" onClick={() => setShowSaveDialog(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <h3>Save Analysis</h3>
-            <p>Give this analysis a title (optional):</p>
-            <input
-              type="text"
-              value={saveTitle}
-              onChange={(e) => setSaveTitle(e.target.value)}
-              placeholder={file ? `${file.name} - ${new Date().toLocaleDateString()}` : 'Untitled Analysis'}
-              className="save-title-input"
-              autoFocus
-            />
-            <div className="modal-actions">
+      {/* Paste Dialog */}
+      {showPasteDialog && (
+        <div className="dialog-overlay" onClick={() => setShowPasteDialog(false)}>
+          <div className="dialog-content" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-header">
+              <h3>Paste Transcript Text</h3>
               <button
+                className="dialog-close"
                 onClick={() => {
-                  setShowSaveDialog(false)
-                  setSaveTitle('')
+                  setShowPasteDialog(false)
+                  setPastedText('')
                 }}
-                className="cancel-button"
-                disabled={saving}
+              >
+                ×
+              </button>
+            </div>
+            <div className="dialog-body">
+              <textarea
+                className="paste-textarea"
+                placeholder="Paste your interview transcript here..."
+                value={pastedText}
+                onChange={(e) => setPastedText(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="dialog-footer">
+              <button
+                className="dialog-button cancel"
+                onClick={() => {
+                  setShowPasteDialog(false)
+                  setPastedText('')
+                }}
               >
                 Cancel
               </button>
               <button
-                onClick={() => saveAnalysis()}
-                className="confirm-button"
-                disabled={saving}
+                className="dialog-button submit"
+                onClick={handlePasteSubmit}
+                disabled={!pastedText.trim()}
               >
-                {saving ? 'Saving...' : 'Save'}
+                Use This Text
               </button>
             </div>
           </div>
         </div>
       )}
+
+      <footer className="footer">
+        Interview Analyzer
+      </footer>
+
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="toast-notification">
+          {toastMessage}
+        </div>
+      )}
+
     </Layout>
   )
 }

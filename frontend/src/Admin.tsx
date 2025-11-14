@@ -1,7 +1,16 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { db, auth } from './firebase'
 import { collection, doc, updateDoc, onSnapshot } from 'firebase/firestore'
 import { Layout } from './Layout'
+import {
+  createColumnHelper,
+  flexRender,
+  getCoreRowModel,
+  getSortedRowModel,
+  getPaginationRowModel,
+  useReactTable,
+  type SortingState,
+} from '@tanstack/react-table'
 import './Admin.css'
 
 interface PendingUser {
@@ -9,6 +18,7 @@ interface PendingUser {
   email: string
   createdAt: string
   approved: boolean
+  approvedAt?: string
 }
 
 interface AdminData {
@@ -17,34 +27,110 @@ interface AdminData {
   gmailAuthorizedAt?: any
 }
 
+const columnHelper = createColumnHelper<PendingUser>()
+
 export function Admin() {
-  const [pendingUsers, setUsers] = useState<PendingUser[]>([])
+  const [users, setUsers] = useState<PendingUser[]>([])
   const [loading, setLoading] = useState(true)
   const [approving, setApproving] = useState<string | null>(null)
   const [gmailAuthorized, setGmailAuthorized] = useState(false)
+  const [sorting, setSorting] = useState<SortingState>([])
   const isAdmin = true // Admin page is only accessible by admins
+
+  // Define columns
+  const columns = useMemo(
+    () => [
+      columnHelper.accessor('approved', {
+        header: 'Status',
+        cell: (info) => (
+          info.getValue() ? (
+            <span className="status-badge approved">✓ Approved</span>
+          ) : (
+            <span className="status-badge pending">⏳ Pending</span>
+          )
+        ),
+        sortingFn: (rowA, rowB) => {
+          // Unapproved users come first
+          if (rowA.original.approved === rowB.original.approved) return 0
+          return rowA.original.approved ? 1 : -1
+        }
+      }),
+      columnHelper.accessor('email', {
+        header: 'Email',
+        cell: (info) => info.getValue(),
+      }),
+      columnHelper.accessor('createdAt', {
+        header: 'Signed Up',
+        cell: (info) => {
+          const date = new Date(info.getValue())
+          return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+        },
+      }),
+      columnHelper.display({
+        id: 'actions',
+        header: 'Actions',
+        cell: ({ row }) => {
+          const user = row.original
+          if (!user.approved) {
+            return (
+              <button
+                onClick={() => approveUser(user.id)}
+                disabled={approving === user.id}
+                className="approve-button"
+              >
+                {approving === user.id ? 'Approving...' : 'Approve'}
+              </button>
+            )
+          }
+          return null
+        },
+      }),
+    ],
+    [approving]
+  )
+
+  // Sort users: unapproved first, then by date
+  const sortedUsers = useMemo(() => {
+    const sorted = [...users].sort((a, b) => {
+      // First sort by approval status
+      if (a.approved !== b.approved) {
+        return a.approved ? 1 : -1
+      }
+      // Then sort by date (newest first)
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    })
+    return sorted
+  }, [users])
+
+  const table = useReactTable({
+    data: sortedUsers,
+    columns,
+    state: {
+      sorting,
+    },
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    initialState: {
+      pagination: {
+        pageSize: 20,
+      },
+    },
+  })
 
   useEffect(() => {
     // Listen for real-time updates to all users
     const usersRef = collection(db, 'users')
     const unsubscribe = onSnapshot(usersRef, (snapshot) => {
-      const users: PendingUser[] = []
+      const usersList: PendingUser[] = []
       snapshot.forEach((doc) => {
-        users.push({
+        usersList.push({
           id: doc.id,
           ...doc.data()
         } as PendingUser)
       })
-
-      // Sort by date, pending first
-      users.sort((a, b) => {
-        if (a.approved === b.approved) {
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        }
-        return a.approved ? 1 : -1
-      })
-
-      setUsers(users)
+      setUsers(usersList)
       setLoading(false)
     })
 
@@ -123,68 +209,134 @@ export function Admin() {
 
   return (
     <Layout user={auth.currentUser} isAdmin={isAdmin} currentView="admin">
+      <div className="admin-container">
+        {/* Gmail Section */}
+        <div className="gmail-section">
+          <div className="section-content">
+            {gmailAuthorized ? (
+              <div className="gmail-connected">
+                <div className="gmail-status">
+                  <span className="status-icon success">✓</span>
+                  <span>Gmail Connected</span>
+                </div>
+                <button onClick={disconnectGmail} className="disconnect-button" title="Disconnect Gmail">
+                  Disconnect
+                </button>
+              </div>
+            ) : (
+              <div className="gmail-disconnected">
+                <div className="gmail-status">
+                  <span className="status-icon warning">⚠</span>
+                  <span>Gmail Not Connected</span>
+                </div>
+                <button onClick={authorizeGmail} className="connect-button">
+                  Connect Gmail to Send Approval Emails
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Users Section */}
         <div className="users-section">
           <div className="users-header">
-            <h2>Users</h2>
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              {gmailAuthorized ? (
-                <div className="gmail-status">
-                  <span style={{ color: '#10b981', marginRight: '0.5rem' }}>✓</span>
-                  Gmail Connected
-                  <button onClick={disconnectGmail} className="disconnect-button" title="Disconnect Gmail">
-                    ✕
-                  </button>
-                </div>
-              ) : (
-                <button onClick={authorizeGmail} className="gmail-button">
-                  📧 Connect Gmail
-                </button>
-              )}
+            <h2>Users ({users.length})</h2>
+            <div className="users-stats">
+              <span className="stat">
+                Pending: {users.filter(u => !u.approved).length}
+              </span>
+              <span className="stat">
+                Approved: {users.filter(u => u.approved).length}
+              </span>
             </div>
           </div>
-          {pendingUsers.length === 0 ? (
+
+          {users.length === 0 ? (
             <div className="empty-state">
               <p>No users yet. Users will appear here when they sign up.</p>
             </div>
           ) : (
-            <div className="users-table">
+            <>
               <div className="table-wrapper">
-                <div className="table-header">
-                  <div className="col-status">Status</div>
-                  <div className="col-email">Email</div>
-                  <div className="col-date">Signed Up</div>
-                  <div className="col-actions">Actions</div>
-                </div>
-                {pendingUsers.map((user) => (
-                  <div key={user.id} className={`table-row ${user.approved ? 'approved' : 'pending'}`}>
-                    <div className="col-status">
-                      {user.approved ? (
-                        <span className="status-badge approved">✓ Approved</span>
-                      ) : (
-                        <span className="status-badge pending">⏳ Pending</span>
-                      )}
-                    </div>
-                    <div className="col-email">{user.email}</div>
-                    <div className="col-date">
-                      {new Date(user.createdAt).toLocaleDateString()} {new Date(user.createdAt).toLocaleTimeString()}
-                    </div>
-                    <div className="col-actions">
-                      {!user.approved && (
-                        <button
-                          onClick={() => approveUser(user.id)}
-                          disabled={approving === user.id}
-                          className="approve-button"
-                        >
-                          {approving === user.id ? 'Approving...' : 'Approve'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                <table className="data-table">
+                  <thead>
+                    {table.getHeaderGroups().map(headerGroup => (
+                      <tr key={headerGroup.id}>
+                        {headerGroup.headers.map(header => (
+                          <th key={header.id}>
+                            {header.isPlaceholder ? null : (
+                              <div
+                                className={header.column.getCanSort() ? 'sortable' : ''}
+                                onClick={header.column.getToggleSortingHandler()}
+                              >
+                                {flexRender(
+                                  header.column.columnDef.header,
+                                  header.getContext()
+                                )}
+                                {{
+                                  asc: ' ↑',
+                                  desc: ' ↓',
+                                }[header.column.getIsSorted() as string] ?? null}
+                              </div>
+                            )}
+                          </th>
+                        ))}
+                      </tr>
+                    ))}
+                  </thead>
+                  <tbody>
+                    {table.getRowModel().rows.map(row => (
+                      <tr key={row.id} className={row.original.approved ? 'approved' : 'pending'}>
+                        {row.getVisibleCells().map(cell => (
+                          <td key={cell.id}>
+                            {flexRender(
+                              cell.column.columnDef.cell,
+                              cell.getContext()
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            </div>
+
+              {/* Pagination */}
+              {table.getPageCount() > 1 && (
+                <div className="pagination">
+                  <button
+                    onClick={() => table.setPageIndex(0)}
+                    disabled={!table.getCanPreviousPage()}
+                  >
+                    {'<<'}
+                  </button>
+                  <button
+                    onClick={() => table.previousPage()}
+                    disabled={!table.getCanPreviousPage()}
+                  >
+                    {'<'}
+                  </button>
+                  <span className="page-info">
+                    Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
+                  </span>
+                  <button
+                    onClick={() => table.nextPage()}
+                    disabled={!table.getCanNextPage()}
+                  >
+                    {'>'}
+                  </button>
+                  <button
+                    onClick={() => table.setPageIndex(table.getPageCount() - 1)}
+                    disabled={!table.getCanNextPage()}
+                  >
+                    {'>>'}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
+      </div>
     </Layout>
   )
 }
