@@ -12,6 +12,7 @@ export interface AnalysisMessage {
   type: string;
   content: string;
   timestamp: Date;
+  raw?: any;
 }
 
 /**
@@ -154,16 +155,17 @@ export async function analyzeInterview(
       messageCount++;
 
       // Log ALL messages for debugging
+      const subtype = (message as any).subtype;
       console.log(`[SDK Message ${messageCount}] Type: ${message.type}`,
-        message.subtype ? `Subtype: ${message.subtype}` : '');
+        subtype ? `Subtype: ${subtype}` : '');
 
       // Send raw message data for ALL message types
       yield {
         type: 'raw',
-        content: `[${message.type}${message.subtype ? ':' + message.subtype : ''}]`,
+        content: `[${message.type}${subtype ? ':' + subtype : ''}]`,
         timestamp: new Date(),
         raw: message
-      };
+      } as AnalysisMessage;
 
       // Handle specific message types
       if (message.type === 'result') {
