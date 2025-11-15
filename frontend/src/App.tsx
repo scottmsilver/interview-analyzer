@@ -582,6 +582,12 @@ function MainApp() {
     }
   }, [connectionStatus, waitingStartTime])
 
+  // Debug logging for agentLogs
+  useEffect(() => {
+    console.log('[FlyoutDebug] agentLogs length:', agentLogs.length, 'showLogs:', showLogs)
+    console.log('[FlyoutDebug] Should show flyout:', agentLogs.length > 0)
+  }, [agentLogs, showLogs])
+
   const showToast = (message: string) => {
     setToastMessage(message)
   }
@@ -658,6 +664,7 @@ function MainApp() {
       return
     }
 
+    console.log('[AnalysisDebug] Starting analysis, API_URL:', API_URL)
     setAnalyzing(true)
     setAnalysis('')
     setError('')
@@ -704,13 +711,19 @@ function MainApp() {
 
             try {
               const message = JSON.parse(data)
+              console.log('[StreamDebug] Received message:', message.type, message)
 
               // Store both content and raw message
               if (message.type === 'raw') {
-                setAgentLogs(prev => [...prev, {
-                  content: message.content,
-                  raw: message.raw || message
-                }])
+                console.log('[StreamDebug] Adding to agentLogs:', message.content)
+                setAgentLogs(prev => {
+                  const newLogs = [...prev, {
+                    content: message.content,
+                    raw: message.raw || message
+                  }]
+                  console.log('[StreamDebug] agentLogs count:', newLogs.length)
+                  return newLogs
+                })
                 setStatusMessage(message.content)
                 // Update connection status based on message content
                 const lowerContent = message.content.toLowerCase()
