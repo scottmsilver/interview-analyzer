@@ -34,9 +34,61 @@ interface UserApproval {
   approvedAt?: string
 }
 
-// Component for each log entry with raw data toggle
-function LogEntry({ log }: { log: { content: string, raw: any } }) {
+// Component for conversation message (simplified, auto-fading)
+function ConversationMessage({ log, shouldFade }: { log: { content: string, raw: any }, shouldFade: boolean }) {
+  // Determine which robot is speaking based on message type
+  const getRobotType = (raw: any, content: string): 'agent' | 'system' | 'tool' => {
+    if (content.includes('tool') || content.includes('Tool') || content.includes('Executing')) return 'tool'
+    if (content.includes('System') || content.includes('SDK')) return 'system'
+    return 'agent'
+  }
+
+  const robotType = getRobotType(log.raw, log.content)
+
+  // Simplify message for conversation view
+  const getSimpleMessage = (content: string) => {
+    // Remove brackets and technical details
+    if (content.startsWith('[') && content.includes(']')) {
+      const match = content.match(/^\[(.*?)\](.*)/)
+      if (match) {
+        const [, messageType, rest] = match
+        if (messageType.toLowerCase().includes('assistant')) return rest.trim() || 'Thinking...'
+        if (messageType.toLowerCase().includes('system')) return 'Processing...'
+        if (messageType.toLowerCase().includes('tool')) return rest.trim() || 'Working on it...'
+      }
+    }
+    return content.length > 100 ? content.substring(0, 100) + '...' : content
+  }
+
+  const messageText = getSimpleMessage(log.content)
+
+  // Robot emojis
+  const robots = {
+    agent: '🤖',
+    tool: '🔧',
+    system: '⚙️'
+  }
+
+  return (
+    <div className={`conversation-bubble conversation-bubble-${robotType} ${shouldFade ? 'fading' : ''}`}>
+      <div className="conversation-avatar">{robots[robotType]}</div>
+      <div className="conversation-text">{messageText}</div>
+    </div>
+  )
+}
+
+// Component for debug log entry
+function DebugLogEntry({ log, index }: { log: { content: string, raw: any }, index: number }) {
   const [showRaw, setShowRaw] = useState(false)
+
+  // Determine which robot is speaking based on message type
+  const getRobotType = (raw: any, content: string): 'agent' | 'system' | 'tool' => {
+    if (content.includes('tool') || content.includes('Tool') || content.includes('Executing')) return 'tool'
+    if (content.includes('System') || content.includes('SDK')) return 'system'
+    return 'agent'
+  }
+
+  const robotType = getRobotType(log.raw, log.content)
 
   // Parse and format tool use messages
   const parseToolUse = (raw: any, content: string) => {
@@ -208,230 +260,35 @@ function LogEntry({ log }: { log: { content: string, raw: any } }) {
   const toolParsed = parseToolUse(log.raw, log.content)
 
   // If we successfully parsed a message, use that
-  if (toolParsed) {
-    const cssClass = toolParsed.type === 'tool' ? 'log-entry-tool' :
-                     toolParsed.type === 'tool-execution' ? 'log-entry-tool-execution' :
-                     toolParsed.type === 'tool-result' ? 'log-entry-tool-result' :
-                     toolParsed.type === 'result' ? 'log-entry-result' :
-                     toolParsed.type === 'text' ? 'log-entry-text' :
-                     toolParsed.type === 'thinking' ? 'log-entry-thinking' :
-                     toolParsed.type === 'system-request' ? 'log-entry-system-request' :
-                     toolParsed.type === 'agent-response' ? 'log-entry-agent-response' :
-                     toolParsed.type === 'agent-thinking' ? 'log-entry-agent-thinking' :
-                     toolParsed.type === 'system' ? 'log-entry-system' :
-                     toolParsed.type === 'assistant' ? 'log-entry-assistant' :
-                     toolParsed.type === 'error' ? 'log-entry-error' : 'log-entry'
+  const messageText = toolParsed ? toolParsed.formatted : log.content
 
-    return (
-      <div className="log-entry-wrapper">
-        <div className={`log-entry ${cssClass}`}>
-          <span className="log-entry-content">{toolParsed.formatted}</span>
-          <button
-            className="raw-toggle"
-            onClick={() => setShowRaw(!showRaw)}
-            title={showRaw ? "Hide details" : "Show details"}
-          >
-            {showRaw ? '−' : '+'}
-          </button>
-        </div>
+  // Robot emojis
+  const robots = {
+    agent: '🤖',
+    tool: '🔧',
+    system: '⚙️'
+  }
+
+  return (
+    <div className={`robot-message robot-message-${robotType}`}>
+      <div className="robot-avatar">{robots[robotType]}</div>
+      <div className="robot-bubble">
+        <div className="robot-message-text">{messageText}</div>
         {showRaw && (
-          <div className="raw-data">
+          <div className="robot-debug">
             <pre>{JSON.stringify(log.raw, null, 2)}</pre>
           </div>
         )}
       </div>
-    )
-  }
-
-  // Original logic for non-tool messages
-  const getMessageType = (content: string) => {
-    const lowerContent = content.toLowerCase()
-    if (lowerContent.includes('error') || lowerContent.includes('failed')) return 'error'
-    if (lowerContent.includes('success') || lowerContent.includes('complete')) return 'success'
-    if (lowerContent.includes('analyzing') || lowerContent.includes('processing')) return 'processing'
-    if (lowerContent.includes('waiting') || lowerContent.includes('connecting')) return 'waiting'
-    if (lowerContent.includes('thinking') || lowerContent.includes('evaluating')) return 'thinking'
-    if (lowerContent.includes('found') || lowerContent.includes('detected')) return 'found'
-    return 'default'
-  }
-
-  const messageType = getMessageType(log.content)
-
-  // Format the content for better readability
-  const formatContent = (content: string) => {
-    // Add line breaks after periods followed by capital letters
-    return content.replace(/\. ([A-Z])/g, '.\n$1')
-  }
-
-  return (
-    <div className="log-entry-wrapper">
-      <div className={`log-entry log-entry-${messageType}`}>
-        <span className="log-entry-icon">
-          {messageType === 'error' && '×'}
-          {messageType === 'success' && '✓'}
-          {messageType === 'processing' && '•'}
-          {messageType === 'waiting' && '◦'}
-          {messageType === 'thinking' && '•'}
-          {messageType === 'found' && '→'}
-          {messageType === 'default' && '▸'}
-        </span>
-        <span className="log-entry-content">{formatContent(log.content)}</span>
-        <button
-          className="raw-toggle"
-          onClick={() => setShowRaw(!showRaw)}
-          title={showRaw ? "Hide details" : "Show details"}
-        >
-          {showRaw ? '−' : '+'}
-        </button>
-      </div>
-      {showRaw && (
-        <div className="raw-data">
-          <pre>{JSON.stringify(log.raw, null, 2)}</pre>
-        </div>
-      )}
+      <button
+        className="robot-details-toggle"
+        onClick={() => setShowRaw(!showRaw)}
+        title={showRaw ? "Hide details" : "Show details"}
+      >
+        {showRaw ? '−' : '+'}
+      </button>
     </div>
   )
-}
-
-// Coffee Aroma Animation Component
-function CoffeeAroma() {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    // Set canvas size
-    canvas.width = 280
-    canvas.height = 210
-
-    const cupCenterX = canvas.width / 2
-    const cupTopY = 90 // Position at the cup rim (y=35 in viewBox, scaled to canvas)
-
-    class Swirl {
-      trail: Array<{ x: number; y: number }>
-      maxTrailLength: number
-      yPos: number
-      angle: number
-      frameCount: number
-      speedFactor: number
-      startX: number
-      resetThreshold: number
-
-      constructor(startXOffset: number, initialAngle: number, speedFactor: number) {
-        this.trail = []
-        this.maxTrailLength = 150
-        this.yPos = cupTopY
-        this.angle = initialAngle
-        this.frameCount = 0
-        this.speedFactor = speedFactor
-        // Start closer to center for tighter emission point
-        this.startX = cupCenterX + (startXOffset * 0.3)
-        this.resetThreshold = 50 // Top of visible area
-      }
-
-      update() {
-        this.frameCount++
-
-        // Calculate distance ratio for ease-out effect
-        const distanceRatio = (this.yPos - this.resetThreshold) / (cupTopY - this.resetThreshold)
-
-        // Slow down dramatically as it rises (cubic ease-out for more natural deceleration)
-        const easeOutSpeed = 0.08 + (0.4 * distanceRatio * distanceRatio * distanceRatio)
-        this.yPos -= easeOutSpeed * this.speedFactor
-
-        // Reset when reaching top
-        if (this.yPos < this.resetThreshold) {
-          this.yPos = cupTopY
-          this.trail = []
-          this.frameCount = 0
-        }
-
-        // Swirl math with dramatic S-curves (slowed down)
-        const time = this.frameCount * 0.02 * this.speedFactor
-        const amplitude = Math.sin(time * 0.5) * 15 + 25
-        this.angle += 0.025 * this.speedFactor
-
-        const xPos = this.startX + Math.sin(this.angle) * amplitude
-
-        // Add new position to trail
-        this.trail.push({ x: xPos, y: this.yPos })
-
-        // Maintain max length
-        if (this.trail.length > this.maxTrailLength) {
-          this.trail.shift()
-        }
-      }
-
-      draw(context: CanvasRenderingContext2D) {
-        if (this.trail.length < 2) return
-
-        context.lineCap = 'round'
-
-        for (let i = 1; i < this.trail.length; i++) {
-          const p = this.trail[i]
-
-          // Fade along the curve
-          const trailOpacity = i / this.trail.length
-
-          // Depth effect: thinner/lighter near center
-          const deviation = Math.abs(p.x - cupCenterX)
-          const maxDeviation = 60
-          const depthFactor = 1 - Math.min(1, deviation / maxDeviation)
-
-          // Line width and opacity with depth and trail fade
-          const finalLineWidth = (0.8 + 1.5 * (1 - depthFactor)) * trailOpacity
-          const depthOpacity = (0.5 + 0.4 * (1 - depthFactor))
-          const finalOpacity = depthOpacity * trailOpacity
-
-          // Use terracotta color
-          context.strokeStyle = `rgba(199, 122, 75, ${finalOpacity})`
-          context.lineWidth = finalLineWidth
-
-          context.beginPath()
-          context.moveTo(this.trail[i - 1].x, this.trail[i - 1].y)
-          context.lineTo(p.x, p.y)
-          context.stroke()
-        }
-      }
-    }
-
-    // Create multiple swirls with slower speeds
-    const swirls = [
-      new Swirl(0, 0, 0.8),
-      new Swirl(-12, Math.PI / 2, 0.9),
-      new Swirl(12, Math.PI, 0.7)
-    ]
-
-    let animationId: number
-
-    function animate() {
-      if (!ctx || !canvas) return
-
-      // Clear with low opacity for trail effect
-      ctx.fillStyle = 'rgba(253, 252, 251, 0.15)'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-      // Update and draw all swirls
-      swirls.forEach(swirl => {
-        swirl.update()
-        swirl.draw(ctx)
-      })
-
-      animationId = requestAnimationFrame(animate)
-    }
-
-    animate()
-
-    return () => {
-      cancelAnimationFrame(animationId)
-    }
-  }, [])
-
-  return <canvas ref={canvasRef} className="coffee-canvas" />
 }
 
 function MainApp() {
@@ -448,6 +305,9 @@ function MainApp() {
   const [statusMessage, setStatusMessage] = useState('')
   const [agentLogs, setAgentLogs] = useState<{content: string, raw: any}[]>([])
   const [showLogs, setShowLogs] = useState(true)
+  const [showDebug, setShowDebug] = useState(false)
+  const [isReplaying, setIsReplaying] = useState(false)
+  const [replayIndex, setReplayIndex] = useState(0)
   const [autoSaved, setAutoSaved] = useState(false)
   const [savedAnalysisId, setSavedAnalysisId] = useState<string | null>(null)
   const [showPasteDialog, setShowPasteDialog] = useState(false)
@@ -582,11 +442,30 @@ function MainApp() {
     }
   }, [connectionStatus, waitingStartTime])
 
-  // Debug logging for agentLogs
+  // Replay animation effect
   useEffect(() => {
-    console.log('[FlyoutDebug] agentLogs length:', agentLogs.length, 'showLogs:', showLogs)
-    console.log('[FlyoutDebug] Should show flyout:', agentLogs.length > 0)
-  }, [agentLogs, showLogs])
+    if (isReplaying && replayIndex < agentLogs.length) {
+      const timer = setTimeout(() => {
+        setReplayIndex(replayIndex + 1)
+      }, 400) // 400ms between messages
+      return () => clearTimeout(timer)
+    } else if (isReplaying && replayIndex >= agentLogs.length) {
+      setIsReplaying(false)
+    }
+  }, [isReplaying, replayIndex, agentLogs.length])
+
+  // Keep replay index in sync with logs when not replaying
+  useEffect(() => {
+    if (!isReplaying) {
+      setReplayIndex(agentLogs.length)
+    }
+  }, [agentLogs.length, isReplaying])
+
+  const startReplay = () => {
+    setReplayIndex(0)
+    setIsReplaying(true)
+  }
+
 
   const showToast = (message: string) => {
     setToastMessage(message)
@@ -664,7 +543,6 @@ function MainApp() {
       return
     }
 
-    console.log('[AnalysisDebug] Starting analysis, API_URL:', API_URL)
     setAnalyzing(true)
     setAnalysis('')
     setError('')
@@ -711,19 +589,13 @@ function MainApp() {
 
             try {
               const message = JSON.parse(data)
-              console.log('[StreamDebug] Received message:', message.type, message)
 
               // Store both content and raw message
               if (message.type === 'raw') {
-                console.log('[StreamDebug] Adding to agentLogs:', message.content)
-                setAgentLogs(prev => {
-                  const newLogs = [...prev, {
-                    content: message.content,
-                    raw: message.raw || message
-                  }]
-                  console.log('[StreamDebug] agentLogs count:', newLogs.length)
-                  return newLogs
-                })
+                setAgentLogs(prev => [...prev, {
+                  content: message.content,
+                  raw: message.raw || message
+                }])
                 setStatusMessage(message.content)
                 // Update connection status based on message content
                 const lowerContent = message.content.toLowerCase()
@@ -832,125 +704,98 @@ function MainApp() {
   // At this point, user is authenticated, approved, and not an admin
   return (
     <Layout user={user} isAdmin={isAdmin} currentView="main">
-      <div className="upload-card-horizontal">
-          <select
-            value={interviewType}
-            onChange={(e) => setInterviewType(e.target.value)}
-            disabled={analyzing}
-            className="select-compact"
-          >
-            {INTERVIEW_TYPES.map(type => (
-              <option key={type.id} value={type.id}>
-                {type.name}
-              </option>
-            ))}
-          </select>
-
-          <div className="file-input-group">
-            <label className="file-label-compact">
-              <input
-                type="file"
-                accept=".txt"
-                onChange={handleFileChange}
-                disabled={analyzing}
-                className="file-input"
-              />
-              <span className="file-button-compact">
-                {file ? `✓ ${file.name}` : 'Choose file'}
-              </span>
-            </label>
-
-            <span className="file-separator">or</span>
-
-            <button
-              onClick={() => setShowPasteDialog(true)}
-              disabled={analyzing}
-              className="paste-button-compact"
-            >
-              Paste text
-            </button>
-          </div>
-
-          <button
-            onClick={analyzeInterview}
-            disabled={!file || analyzing}
-            className="analyze-button-compact"
-          >
-            {analyzing ? (
-              <>
-                <span className="jumping-dino">🦖</span>
-                <span>Analyzing...</span>
-              </>
-            ) : (
-              'Analyze'
-            )}
-          </button>
-        </div>
-
         {!analysis && !analyzing && (
           <div className="welcome-section">
-            <div className="welcome-illustration">
-              <div className="coffee-cup-container">
-                <svg className="coffee-cup-svg" width="280" height="210" viewBox="0 0 120 80" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  {/* Narrow coffee cup - centered on mouth, taller */}
-                  {/* Cup body - taller bowl shape */}
-                  <path d="M45 35 Q43 48 46 58 L74 58 Q77 48 75 35 Z"
-                        stroke="#c77a4b" strokeWidth="1.2" fill="none" opacity="0.6"/>
+            <div className="upload-bar-centered">
+              <select
+                value={interviewType}
+                onChange={(e) => setInterviewType(e.target.value)}
+                disabled={analyzing}
+                className="select-compact"
+              >
+                {INTERVIEW_TYPES.map(type => (
+                  <option key={type.id} value={type.id}>
+                    {type.name}
+                  </option>
+                ))}
+              </select>
 
-                  {/* Cup rim - front arc only */}
-                  <path d="M45 35 Q60 37 75 35" stroke="#c77a4b" strokeWidth="1" fill="none" opacity="0.6"/>
+              <div className="file-input-group">
+                <label className="file-label-compact">
+                  <input
+                    type="file"
+                    accept=".txt"
+                    onChange={handleFileChange}
+                    disabled={analyzing}
+                    className="file-input"
+                  />
+                  <span className="file-button-compact">
+                    {file ? `✓ ${file.name}` : 'Choose file'}
+                  </span>
+                </label>
 
-                  {/* Elegant handle */}
-                  <path d="M75 40 Q81 40 81 46 Q81 52 75 52"
-                        stroke="#c77a4b" strokeWidth="1.2" fill="none" opacity="0.6" strokeLinecap="round"/>
+                <span className="file-separator">or</span>
 
-                  {/* Saguaro cactus - BIG, to the right */}
-                  {/* Main tall trunk */}
-                  <path d="M94 58 L94 18" stroke="#738c5f" strokeWidth="7" fill="none" opacity="0.55" strokeLinecap="round"/>
-                  <path d="M106 58 L106 18" stroke="#738c5f" strokeWidth="7" fill="none" opacity="0.55" strokeLinecap="round"/>
-
-                  {/* Smaller left arm (higher up) */}
-                  <path d="M94 32 Q88 32 88 26 L88 22" stroke="#738c5f" strokeWidth="5" fill="none" opacity="0.55" strokeLinecap="round"/>
-
-                  {/* Bigger right arm (lower and longer) */}
-                  <path d="M106 38 Q112 38 112 32 L112 24" stroke="#738c5f" strokeWidth="5.5" fill="none" opacity="0.55" strokeLinecap="round"/>
-
-                  {/* Subtle spines as dots - sparse */}
-                  <circle cx="100" cy="24" r="0.6" fill="#738c5f" opacity="0.35"/>
-                  <circle cx="100" cy="32" r="0.6" fill="#738c5f" opacity="0.35"/>
-                  <circle cx="100" cy="40" r="0.6" fill="#738c5f" opacity="0.35"/>
-                </svg>
-                <CoffeeAroma />
+                <button
+                  onClick={() => setShowPasteDialog(true)}
+                  disabled={analyzing}
+                  className="paste-button-compact"
+                >
+                  Paste text
+                </button>
               </div>
+
+              <button
+                onClick={analyzeInterview}
+                disabled={!file || analyzing}
+                className="analyze-button-compact"
+              >
+                {analyzing ? (
+                  <>
+                    <span className="jumping-dino">🦖</span>
+                    <span>Analyzing...</span>
+                  </>
+                ) : (
+                  'Analyze'
+                )}
+              </button>
             </div>
-            <h2 className="welcome-title">Welcome to Your Interview Analysis Journey</h2>
-            <p className="welcome-message">
-              Take a deep breath. You've got this!
-            </p>
-            <p className="welcome-subtitle">
-              Upload your interview transcript above for thoughtful, constructive feedback.
-              Analysis takes about 2 minutes.
-            </p>
-            <div className="welcome-tips">
-              <div className="tip">
-                <svg className="tip-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M14 5L6 13L2 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-                <span className="tip-text">Upload text transcript</span>
+
+            <div className="welcome-content-wrapper">
+              <div className="welcome-illustration">
+                <img src="/coffee-welcome.png" alt="Coffee cup with succulent" className="welcome-image" />
               </div>
-              <div className="tip">
-                <svg className="tip-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5"/>
-                  <circle cx="8" cy="8" r="2" fill="currentColor"/>
-                </svg>
-                <span className="tip-text">Company-specific insights</span>
-              </div>
-              <div className="tip">
-                <svg className="tip-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M8 2V10M8 10L5 7M8 10L11 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M2 14H14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                </svg>
-                <span className="tip-text">Actionable feedback</span>
+              <div className="welcome-content">
+                <h2 className="welcome-title">Welcome to Your Interview Analysis Journey</h2>
+                <p className="welcome-message">
+                  Take a deep breath. You've got this!
+                </p>
+                <p className="welcome-subtitle">
+                  Upload your interview transcript above for thoughtful, constructive feedback.
+                  Analysis takes about 2 minutes.
+                </p>
+                <div className="welcome-tips">
+                  <div className="tip">
+                    <svg className="tip-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M14 5L6 13L2 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                    <span className="tip-text">Upload text transcript</span>
+                  </div>
+                  <div className="tip">
+                    <svg className="tip-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5"/>
+                      <circle cx="8" cy="8" r="2" fill="currentColor"/>
+                    </svg>
+                    <span className="tip-text">Company-specific insights</span>
+                  </div>
+                  <div className="tip">
+                    <svg className="tip-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M8 2V10M8 10L5 7M8 10L11 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M2 14H14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                    </svg>
+                    <span className="tip-text">Actionable feedback</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1001,19 +846,97 @@ function MainApp() {
             </div>
             {showLogs && (
               <div className="flyout-content">
-                <div className="current-status">
-                  {statusMessage && (
-                    <div className="status-message">
-                      <span className="status-icon">→</span>
-                      {statusMessage}
-                    </div>
+                {/* Live Conversation - two robots with thought balloons */}
+                <div className="robot-scene">
+                  {/* Replay button */}
+                  {!analyzing && agentLogs.length > 0 && (
+                    <button
+                      onClick={startReplay}
+                      className="replay-button"
+                      disabled={isReplaying}
+                      title="Replay animation"
+                    >
+                      {isReplaying ? '⏸' : '▶'} Replay
+                    </button>
                   )}
+
+                  {/* Agent Robot (left) */}
+                  <div className="robot-character robot-character-agent">
+                    {(() => {
+                      const logsToShow = isReplaying ? agentLogs.slice(0, replayIndex) : agentLogs
+                      const lastAgentMsg = [...logsToShow].reverse().find(log => {
+                        const content = log.content.toLowerCase()
+                        return !content.includes('system') && !content.includes('sdk') &&
+                               !content.includes('tool') && !content.includes('executing')
+                      })
+                      const agentText = lastAgentMsg ?
+                        (lastAgentMsg.content.startsWith('[') ?
+                          lastAgentMsg.content.match(/\](.*)/)?.[1]?.trim() || 'Thinking...' :
+                          lastAgentMsg.content.substring(0, 80) + (lastAgentMsg.content.length > 80 ? '...' : '')) :
+                        'Ready...'
+
+                      return (
+                        <>
+                          {lastAgentMsg && (
+                            <div className="thought-balloon thought-balloon-left" key={logsToShow.indexOf(lastAgentMsg)}>
+                              {agentText}
+                            </div>
+                          )}
+                          <div className="robot-body">🤖</div>
+                          <div className="robot-label">Agent</div>
+                        </>
+                      )
+                    })()}
+                  </div>
+
+                  {/* System Robot (right) */}
+                  <div className="robot-character robot-character-system">
+                    {(() => {
+                      const logsToShow = isReplaying ? agentLogs.slice(0, replayIndex) : agentLogs
+                      const lastSystemMsg = [...logsToShow].reverse().find(log => {
+                        const content = log.content.toLowerCase()
+                        return content.includes('system') || content.includes('sdk') ||
+                               content.includes('tool') || content.includes('executing')
+                      })
+                      const systemText = lastSystemMsg ?
+                        (lastSystemMsg.content.startsWith('[') ?
+                          lastSystemMsg.content.match(/\](.*)/)?.[1]?.trim() || 'Processing...' :
+                          lastSystemMsg.content.substring(0, 80) + (lastSystemMsg.content.length > 80 ? '...' : '')) :
+                        'Ready...'
+
+                      return (
+                        <>
+                          {lastSystemMsg && (
+                            <div className="thought-balloon thought-balloon-right" key={logsToShow.indexOf(lastSystemMsg)}>
+                              {systemText}
+                            </div>
+                          )}
+                          <div className="robot-body">⚙️</div>
+                          <div className="robot-label">System</div>
+                        </>
+                      )
+                    })()}
+                  </div>
                 </div>
-                <div className="log-entries">
-                  {agentLogs.map((log, i) => (
-                    <LogEntry key={i} log={log} />
-                  ))}
+
+                {/* Debug Toggle */}
+                <div className="debug-toggle-section">
+                  <button
+                    onClick={() => setShowDebug(!showDebug)}
+                    className="debug-toggle-button"
+                  >
+                    {showDebug ? '▼' : '▶'} Debug Logs ({agentLogs.length})
+                  </button>
                 </div>
+
+                {/* Debug Section - all logs */}
+                {showDebug && (
+                  <div className="debug-logs">
+                    {agentLogs.map((log, i) => (
+                      <DebugLogEntry key={i} log={log} index={i} />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
