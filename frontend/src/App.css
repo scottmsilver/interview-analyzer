@@ -686,15 +686,7 @@ body {
 
 /* Simple log styling - no color coding */
 
-/* Error */
-.error-box {
-  padding: 0.875rem;
-  background: #fee;
-  border: 1px solid #fcc;
-  border-radius: 8px;
-  color: #c33;
-  font-size: 0.9rem;
-}
+/* Error box styles are now in index.css */
 
 /* Results */
 .results {
@@ -942,7 +934,10 @@ body {
 .welcome-content-wrapper {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 1.5rem;
+  max-width: 900px;
+  margin: 0 auto;
 }
 
 @keyframes fadeInUp {
@@ -991,11 +986,12 @@ body {
 
 .welcome-subtitle {
   font-family: 'Plus Jakarta Sans', sans-serif;
-  font-size: 0.875rem;
-  color: var(--text-muted);
+  font-size: 0.9rem;
+  color: var(--primary-600);
   line-height: 1.5;
   max-width: 500px;
   margin: 0 0 1rem 0;
+  font-weight: 500;
 }
 
 .welcome-tips {
@@ -1100,13 +1096,7 @@ body {
   }
 }
 
-/* Loading */
-.loading {
-  text-align: center;
-  font-size: 1rem;
-  color: #666;
-  padding: 2rem;
-}
+/* Loading state is now in index.css */
 
 /* Footer */
 .footer {
@@ -1476,49 +1466,7 @@ body {
   }
 }
 
-/* Toast Notification */
-.toast-notification {
-  position: fixed;
-  top: 4.5rem;
-  left: 50%;
-  transform: translateX(-50%);
-  background: white;
-  color: #2a2a2a;
-  padding: 0.25rem 0.5rem;
-  border-radius: 12px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08),
-              0 1px 2px rgba(0, 0, 0, 0.1);
-  font-size: 0.7rem;
-  font-weight: 500;
-  z-index: 2000;
-  display: inline-block;
-  animation: slideDown 0.2s ease-out,
-             fadeOut 0.15s ease-out 1.3s forwards;
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  line-height: 1;
-  white-space: nowrap;
-  max-width: fit-content;
-}
-
-@keyframes slideDown {
-  from {
-    transform: translateX(-50%) translateY(-20px);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(-50%) translateY(0);
-    opacity: 1;
-  }
-}
-
-@keyframes fadeOut {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
-}
+/* Toast notification styles are now in index.css */
 
 /* Enhanced Agent Status Window Styles */
 .flyout-title-section {
@@ -1825,4 +1773,179 @@ body {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* ============================================
+   Brewing Animation - Coffee Cup with Steam
+   ============================================ */
+
+.brewing-section {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 50vh;
+  padding: 2rem;
+}
+
+.brewing-container {
+  text-align: center;
+  max-width: 500px;
+  width: 100%;
+}
+
+.coffee-cup-brewing {
+  position: relative;
+  display: inline-block;
+  margin-bottom: 1.5rem;
+}
+
+.cup-body {
+  font-size: 5rem;
+  line-height: 1;
+}
+
+.steam-container {
+  position: absolute;
+  top: -50px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+}
+
+.steam {
+  width: 6px;
+  height: 50px;
+  background: linear-gradient(to top, rgba(180, 180, 180, 0.4), transparent);
+  border-radius: 50%;
+  animation: steam-rise 2.5s ease-out infinite;
+}
+
+.steam-1 { animation-delay: 0s; }
+.steam-2 { animation-delay: 0.5s; }
+.steam-3 { animation-delay: 1s; }
+
+@keyframes steam-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scaleX(1) scaleY(0.5);
+  }
+  20% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-40px) scaleX(2) scaleY(1);
+  }
+}
+
+.brewing-title {
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: #555;
+  margin-bottom: 0.75rem;
+}
+
+.time-estimate {
+  font-size: 0.9rem;
+  color: #888;
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.time-elapsed {
+  font-family: 'SF Mono', Monaco, monospace;
+  font-weight: 500;
+  color: #666;
+}
+
+.time-separator {
+  color: #ccc;
+}
+
+.time-remaining {
+  color: #999;
+}
+
+/* Horizontal progress bar */
+.progress-bar-container {
+  position: relative;
+  margin-bottom: 1.5rem;
+}
+
+.progress-steps-horizontal {
+  display: flex;
+  justify-content: space-between;
+  position: relative;
+  z-index: 1;
+}
+
+.progress-dot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.progress-dot .dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ddd;
+  border: 2px solid #ddd;
+  transition: all 0.3s ease;
+}
+
+.progress-dot.completed .dot {
+  background: #888;
+  border-color: #888;
+}
+
+.progress-dot.active .dot {
+  background: #fff;
+  border-color: #888;
+  box-shadow: 0 0 0 3px rgba(136, 136, 136, 0.2);
+}
+
+.progress-dot .dot-label {
+  font-size: 0.7rem;
+  color: #999;
+  transition: color 0.3s ease;
+}
+
+.progress-dot.completed .dot-label,
+.progress-dot.active .dot-label {
+  color: #666;
+}
+
+.progress-line {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  background: #ddd;
+  z-index: 0;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #888;
+  transition: width 0.5s ease;
+}
+
+.latest-activity {
+  color: #888;
+  font-size: 0.8rem;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  padding: 0.5rem 1rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -85,49 +85,7 @@
   }
 }
 
-/* Toast Notification (same as in App.css) */
-.toast-notification {
-  position: fixed;
-  top: 4.5rem;
-  left: 50%;
-  transform: translateX(-50%);
-  background: white;
-  color: #2a2a2a;
-  padding: 0.25rem 0.5rem;
-  border-radius: 12px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08),
-              0 1px 2px rgba(0, 0, 0, 0.1);
-  font-size: 0.7rem;
-  font-weight: 500;
-  z-index: 2000;
-  display: inline-block;
-  animation: slideDown 0.2s ease-out,
-             fadeOut 0.15s ease-out 1.3s forwards;
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  line-height: 1;
-  white-space: nowrap;
-  max-width: fit-content;
-}
-
-@keyframes slideDown {
-  from {
-    transform: translateX(-50%) translateY(-20px);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(-50%) translateY(0);
-    opacity: 1;
-  }
-}
-
-@keyframes fadeOut {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
-}
+/* Toast and Interview Badge styles are now in index.css */
 
 /* Transcript Button */
 .transcript-button {
@@ -320,4 +278,237 @@
     padding: 0.75rem;
     font-size: 0.8rem;
   }
+}
+
+/* Shared View Container */
+.shared-view-container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem;
+  min-height: 100vh;
+  background: #fafafa;
+}
+
+.shared-view-header {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.shared-badge {
+  display: inline-block;
+  padding: 0.35rem 0.75rem;
+  background: #f0f0f0;
+  color: #666;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Share Modal */
+.share-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.share-modal {
+  background: white;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 450px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+}
+
+.share-modal-header {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.share-modal-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.share-close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #999;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.share-close-btn:hover {
+  color: #333;
+}
+
+.share-modal-body {
+  padding: 1.25rem;
+}
+
+.share-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.share-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.share-option:hover {
+  border-color: #ccc;
+}
+
+.share-option.selected {
+  border-color: #888;
+  background: #f9f9f9;
+}
+
+.share-option input[type="radio"] {
+  margin-top: 2px;
+}
+
+.share-option-content {
+  flex: 1;
+}
+
+.share-option-label {
+  font-weight: 500;
+  font-size: 0.95rem;
+  color: #333;
+}
+
+.share-option-desc {
+  font-size: 0.8rem;
+  color: #888;
+  margin-top: 2px;
+}
+
+.share-emails-input {
+  margin-top: 0.75rem;
+}
+
+.share-emails-input input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.share-emails-input input:focus {
+  outline: none;
+  border-color: #888;
+}
+
+.share-emails-hint {
+  font-size: 0.75rem;
+  color: #999;
+  margin-top: 0.35rem;
+}
+
+.share-link-section {
+  background: #f5f5f5;
+  padding: 0.75rem;
+  border-radius: 8px;
+}
+
+.share-link-label {
+  font-size: 0.75rem;
+  color: #888;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.share-link-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.share-link-input {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-family: 'SF Mono', Monaco, monospace;
+  background: white;
+}
+
+.share-copy-btn {
+  padding: 0.5rem 1rem;
+  background: #333;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background 0.2s;
+}
+
+.share-copy-btn:hover {
+  background: #555;
+}
+
+.share-modal-footer {
+  padding: 1rem 1.25rem;
+  border-top: 1px solid #eee;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.share-cancel-btn {
+  padding: 0.5rem 1rem;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.share-cancel-btn:hover {
+  border-color: #999;
+}
+
+.share-save-btn {
+  padding: 0.5rem 1rem;
+  background: #333;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.share-save-btn:hover {
+  background: #555;
+}
+
+.share-save-btn:disabled {
+  background: #ccc;
+  cursor: not-allowed;
 }

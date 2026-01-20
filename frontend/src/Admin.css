@@ -247,13 +247,7 @@
   font-size: 1rem;
 }
 
-/* Loading state */
-.loading {
-  text-align: center;
-  color: #666;
-  font-size: 1rem;
-  padding: 4rem 0;
-}
+/* Loading state is now in index.css */
 
 /* Pagination */
 .pagination {

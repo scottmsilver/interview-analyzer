@@ -1,4 +1,4 @@
-import { type User } from 'firebase/auth'
+import { type User } from './api'
 import { Header } from './Header'
 import './Layout.css'
 

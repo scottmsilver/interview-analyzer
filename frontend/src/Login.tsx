@@ -1,11 +1,5 @@
 import { useState } from 'react'
-import {
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  GoogleAuthProvider,
-  signInWithPopup
-} from 'firebase/auth'
-import { auth } from './firebase'
+import { signInWithEmail, signUpWithEmail, signInWithGoogle } from './api'
 import './Login.css'
 
 interface LoginProps {
@@ -26,9 +20,9 @@ export function Login({ onLogin }: LoginProps) {
 
     try {
       if (isSignUp) {
-        await createUserWithEmailAndPassword(auth, email, password)
+        await signUpWithEmail(email, password)
       } else {
-        await signInWithEmailAndPassword(auth, email, password)
+        await signInWithEmail(email, password)
       }
       onLogin()
     } catch (err: any) {
@@ -60,12 +54,7 @@ export function Login({ onLogin }: LoginProps) {
     setLoading(true)
 
     try {
-      const provider = new GoogleAuthProvider()
-      // Force account selection every time
-      provider.setCustomParameters({
-        prompt: 'select_account'
-      })
-      await signInWithPopup(auth, provider)
+      await signInWithGoogle()
       onLogin()
     } catch (err: any) {
       console.error('Google auth error:', err)

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { signOut, type User } from 'firebase/auth'
-import { auth } from './firebase'
+import { signOut, type User } from './api'
 import './Header.css'
 
 interface HeaderProps {
@@ -31,7 +30,7 @@ export function Header({ user, isAdmin, currentView }: HeaderProps) {
 
   const handleLogout = async () => {
     try {
-      await signOut(auth)
+      await signOut()
       setShowProfileMenu(false)
     } catch (error) {
       console.error('Logout error:', error)

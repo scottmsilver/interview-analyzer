@@ -5,13 +5,7 @@
   padding: 0 2rem;
 }
 
-/* Loading state */
-.loading {
-  text-align: center;
-  color: #666;
-  font-size: 1rem;
-  padding: 4rem 0;
-}
+/* Loading state is now in index.css */
 
 /* Empty state */
 .empty-state {
@@ -138,18 +132,7 @@
   font-family: 'SF Mono', Monaco, monospace;
 }
 
-.interview-type-badge {
-  display: inline-block;
-  padding: 0.15rem 0.4rem;
-  background: rgba(199, 122, 75, 0.08);
-  color: var(--primary-600);
-  border-radius: 12px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  white-space: nowrap;
-  border: 1px solid rgba(199, 122, 75, 0.15);
-  letter-spacing: 0.02em;
-}
+/* Interview type badge is now in index.css */
 
 /* Action buttons */
 .table-actions {

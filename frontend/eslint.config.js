@@ -20,4 +20,22 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  // Restrict Firebase imports to only api.ts and firebase.ts
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/api.ts', 'src/firebase.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['firebase/*', 'firebase/**'],
+              message: 'Import from ./api instead of using Firebase directly. Firebase access should only be in api.ts and firebase.ts.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ])

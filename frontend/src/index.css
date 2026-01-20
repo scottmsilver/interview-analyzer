@@ -69,3 +69,83 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+
+/* =============================================================================
+   Shared Components - used across multiple files
+   ============================================================================= */
+
+/* Loading State */
+.loading {
+  text-align: center;
+  color: #666;
+  font-size: 1rem;
+  padding: 4rem 0;
+}
+
+/* Error Box */
+.error-box {
+  background-color: #fee2e2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+/* Interview Type Badge */
+.interview-type-badge {
+  display: inline-block;
+  padding: 0.15rem 0.4rem;
+  background: rgba(199, 122, 75, 0.08);
+  color: var(--primary-600);
+  border-radius: 12px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid rgba(199, 122, 75, 0.15);
+  letter-spacing: 0.02em;
+}
+
+/* Toast Notification */
+.toast-notification {
+  position: fixed;
+  top: 4.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: white;
+  color: #2a2a2a;
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08),
+              0 1px 2px rgba(0, 0, 0, 0.1);
+  font-size: 0.7rem;
+  font-weight: 500;
+  z-index: 2000;
+  display: inline-block;
+  animation: toastSlideDown 0.2s ease-out,
+             toastFadeOut 0.15s ease-out 1.3s forwards;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  line-height: 1;
+  white-space: nowrap;
+  max-width: fit-content;
+}
+
+@keyframes toastSlideDown {
+  from {
+    transform: translateX(-50%) translateY(-20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes toastFadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}

@@ -1,7 +1,15 @@
 import { useState, useEffect, useMemo } from 'react'
-import { db, auth } from './firebase'
-import { collection, doc, updateDoc, onSnapshot } from 'firebase/firestore'
+import {
+  getCurrentUser,
+  subscribeToAllUsers,
+  subscribeToAdminData,
+  approveUser as apiApproveUser,
+  updateAdminGmail,
+  type UserRecord,
+} from './api'
 import { Layout } from './Layout'
+import { Loading } from './components'
+import { formatDateTime, getErrorMessage } from './types'
 import {
   createColumnHelper,
   flexRender,
@@ -13,19 +21,7 @@ import {
 } from '@tanstack/react-table'
 import './Admin.css'
 
-interface PendingUser {
-  id: string
-  email: string
-  createdAt: string
-  approved: boolean
-  approvedAt?: string
-}
-
-interface AdminData {
-  email: string
-  gmailTokens?: any
-  gmailAuthorizedAt?: any
-}
+type PendingUser = UserRecord & { id: string }
 
 const columnHelper = createColumnHelper<PendingUser>()
 
@@ -61,10 +57,7 @@ export function Admin() {
       }),
       columnHelper.accessor('createdAt', {
         header: 'Signed Up',
-        cell: (info) => {
-          const date = new Date(info.getValue())
-          return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-        },
+        cell: (info) => formatDateTime(info.getValue()),
       }),
       columnHelper.display({
         id: 'actions',
@@ -74,7 +67,7 @@ export function Admin() {
           if (!user.approved) {
             return (
               <button
-                onClick={() => approveUser(user.id)}
+                onClick={() => handleApproveUser(user.id)}
                 disabled={approving === user.id}
                 className="approve-button"
               >
@@ -119,17 +112,11 @@ export function Admin() {
     },
   })
 
+  const currentUser = getCurrentUser()
+
   useEffect(() => {
     // Listen for real-time updates to all users
-    const usersRef = collection(db, 'users')
-    const unsubscribe = onSnapshot(usersRef, (snapshot) => {
-      const usersList: PendingUser[] = []
-      snapshot.forEach((doc) => {
-        usersList.push({
-          id: doc.id,
-          ...doc.data()
-        } as PendingUser)
-      })
+    const unsubscribe = subscribeToAllUsers((usersList) => {
       setUsers(usersList)
       setLoading(false)
     })
@@ -139,76 +126,59 @@ export function Admin() {
 
   useEffect(() => {
     // Check if admin has authorized Gmail
-    const checkGmailAuth = async () => {
-      const user = auth.currentUser
-      if (!user) return
+    if (!currentUser) return
 
-      const adminRef = doc(db, 'admins', user.uid)
-      const unsubscribe = onSnapshot(adminRef, (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data() as AdminData
-          setGmailAuthorized(!!data.gmailTokens)
-        }
-      })
+    const unsubscribe = subscribeToAdminData(currentUser.uid, (data) => {
+      setGmailAuthorized(!!data?.gmailTokens)
+    })
 
-      return () => unsubscribe()
-    }
+    return () => unsubscribe()
+  }, [currentUser])
 
-    checkGmailAuth()
-  }, [])
-
-  const approveUser = async (userId: string) => {
+  const handleApproveUser = async (userId: string) => {
     setApproving(userId)
     try {
-      await updateDoc(doc(db, 'users', userId), {
-        approved: true,
-        approvedAt: new Date().toISOString()
-      })
+      await apiApproveUser(userId)
     } catch (error) {
       console.error('Error approving user:', error)
-      alert('Error approving user: ' + (error instanceof Error ? error.message : 'Unknown error'))
+      alert('Error approving user: ' + getErrorMessage(error))
     } finally {
       setApproving(null)
     }
   }
 
   const authorizeGmail = () => {
-    const user = auth.currentUser
-    if (!user) return
+    if (!currentUser) return
 
-    const authUrl = `https://us-central1-interview-analyzer-prod.cloudfunctions.net/authorizeGmail?adminUid=${user.uid}`
+    const authUrl = `https://us-central1-interview-analyzer-prod.cloudfunctions.net/authorizeGmail?adminUid=${currentUser.uid}`
     window.open(authUrl, '_blank', 'width=600,height=700')
   }
 
   const disconnectGmail = async () => {
-    const user = auth.currentUser
-    if (!user) return
+    if (!currentUser) return
 
     if (!confirm('Are you sure you want to disconnect Gmail? You will need to re-authorize to send approval emails.')) {
       return
     }
 
     try {
-      await updateDoc(doc(db, 'admins', user.uid), {
-        gmailTokens: null,
-        gmailAuthorizedAt: null
-      })
+      await updateAdminGmail(currentUser.uid, null, null)
     } catch (error) {
       console.error('Error disconnecting Gmail:', error)
-      alert('Error disconnecting Gmail: ' + (error instanceof Error ? error.message : 'Unknown error'))
+      alert('Error disconnecting Gmail: ' + getErrorMessage(error))
     }
   }
 
   if (loading) {
     return (
-      <Layout user={auth.currentUser} isAdmin={true} currentView="admin">
-        <div className="loading">Loading admin dashboard...</div>
+      <Layout user={currentUser} isAdmin={true} currentView="admin">
+        <Loading message="Loading admin dashboard..." />
       </Layout>
     )
   }
 
   return (
-    <Layout user={auth.currentUser} isAdmin={isAdmin} currentView="admin">
+    <Layout user={currentUser} isAdmin={isAdmin} currentView="admin">
       <div className="admin-container">
         {/* Gmail Section */}
         <div className="gmail-section">

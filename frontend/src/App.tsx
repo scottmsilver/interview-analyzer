@@ -1,8 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import rehypeHighlight from 'rehype-highlight'
 import 'github-markdown-css/github-markdown-light.css'
 import 'highlight.js/styles/github.css'
 import './App.css'
@@ -10,79 +7,31 @@ import { Login } from './Login'
 import { Admin } from './Admin'
 import { History } from './History'
 import { AnalysisView } from './AnalysisView'
+import { SharedView } from './SharedView'
 import { Layout } from './Layout'
-import { auth, db } from './firebase'
-import { onAuthStateChanged, type User } from 'firebase/auth'
-import { doc, getDoc, setDoc, onSnapshot, collection, addDoc } from 'firebase/firestore'
+import { Toast, AnalysisMarkdown } from './components'
+import { CopyIcon } from './icons'
+import { useToast, useCopyToClipboard } from './hooks'
+import { INTERVIEW_TYPES, generateShareId, formatDateTime } from './types'
+import {
+  subscribeToAuthState,
+  isUserAdmin,
+  getUser,
+  createUser,
+  subscribeToUserApproval,
+  createAnalysis,
+  type User,
+  type UserRecord,
+} from './api'
 
-interface InterviewType {
-  id: string
-  name: string
-}
-
-const INTERVIEW_TYPES: InterviewType[] = [
-  { id: 'google-apm', name: 'Google APM' },
-  { id: 'meta-pm', name: 'Meta PM' },
-  { id: 'amazon-pm', name: 'Amazon PM' },
-  { id: 'generic', name: 'Generic PM' },
-]
-
-interface UserApproval {
-  approved: boolean
-  email: string
-  createdAt: string
-  approvedAt?: string
-}
-
-// Component for conversation message (simplified, auto-fading)
-function ConversationMessage({ log, shouldFade }: { log: { content: string, raw: any }, shouldFade: boolean }) {
-  // Determine which robot is speaking based on message type
-  const getRobotType = (raw: any, content: string): 'agent' | 'system' | 'tool' => {
-    if (content.includes('tool') || content.includes('Tool') || content.includes('Executing')) return 'tool'
-    if (content.includes('System') || content.includes('SDK')) return 'system'
-    return 'agent'
-  }
-
-  const robotType = getRobotType(log.raw, log.content)
-
-  // Simplify message for conversation view
-  const getSimpleMessage = (content: string) => {
-    // Remove brackets and technical details
-    if (content.startsWith('[') && content.includes(']')) {
-      const match = content.match(/^\[(.*?)\](.*)/)
-      if (match) {
-        const [, messageType, rest] = match
-        if (messageType.toLowerCase().includes('assistant')) return rest.trim() || 'Thinking...'
-        if (messageType.toLowerCase().includes('system')) return 'Processing...'
-        if (messageType.toLowerCase().includes('tool')) return rest.trim() || 'Working on it...'
-      }
-    }
-    return content.length > 100 ? content.substring(0, 100) + '...' : content
-  }
-
-  const messageText = getSimpleMessage(log.content)
-
-  // Robot emojis
-  const robots = {
-    agent: '🤖',
-    tool: '🔧',
-    system: '⚙️'
-  }
-
-  return (
-    <div className={`conversation-bubble conversation-bubble-${robotType} ${shouldFade ? 'fading' : ''}`}>
-      <div className="conversation-avatar">{robots[robotType]}</div>
-      <div className="conversation-text">{messageText}</div>
-    </div>
-  )
-}
+// UserRecord from API already has: approved, email, createdAt, approvedAt?
 
 // Component for debug log entry
-function DebugLogEntry({ log, index }: { log: { content: string, raw: any }, index: number }) {
+function DebugLogEntry({ log }: { log: { content: string, raw: any } }) {
   const [showRaw, setShowRaw] = useState(false)
 
   // Determine which robot is speaking based on message type
-  const getRobotType = (raw: any, content: string): 'agent' | 'system' | 'tool' => {
+  const getRobotType = (_raw: any, content: string): 'agent' | 'system' | 'tool' => {
     if (content.includes('tool') || content.includes('Tool') || content.includes('Executing')) return 'tool'
     if (content.includes('System') || content.includes('SDK')) return 'system'
     return 'agent'
@@ -294,7 +243,7 @@ function DebugLogEntry({ log, index }: { log: { content: string, raw: any }, ind
 function MainApp() {
   const navigate = useNavigate()
   const [user, setUser] = useState<User | null>(null)
-  const [userApproval, setUserApproval] = useState<UserApproval | null>(null)
+  const [userApproval, setUserApproval] = useState<UserRecord | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
   const [file, setFile] = useState<File | null>(null)
@@ -304,7 +253,7 @@ function MainApp() {
   const [error, setError] = useState('')
   const [statusMessage, setStatusMessage] = useState('')
   const [agentLogs, setAgentLogs] = useState<{content: string, raw: any}[]>([])
-  const [showLogs, setShowLogs] = useState(true)
+  const [showLogs, setShowLogs] = useState(false)
   const [showDebug, setShowDebug] = useState(false)
   const [isReplaying, setIsReplaying] = useState(false)
   const [replayIndex, setReplayIndex] = useState(0)
@@ -312,16 +261,20 @@ function MainApp() {
   const [savedAnalysisId, setSavedAnalysisId] = useState<string | null>(null)
   const [showPasteDialog, setShowPasteDialog] = useState(false)
   const [pastedText, setPastedText] = useState('')
-  const [toastMessage, setToastMessage] = useState('')
+
+  const { toastMessage, showToast } = useToast()
+  const { copyMarkdownContent } = useCopyToClipboard(showToast)
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'thinking' | 'waiting'>('idle')
   const [, setLastHeartbeat] = useState(Date.now()) // Used for triggering re-renders for heartbeat animation
   const [waitingStartTime, setWaitingStartTime] = useState<number | null>(null)
   const [waitingDuration, setWaitingDuration] = useState(0)
+  const [analysisStartTime, setAnalysisStartTime] = useState<number | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
 
   // API URL configuration
   // In production, you need to deploy your backend somewhere (e.g., Heroku, Railway, Render)
   // and update this URL accordingly
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:9002'
 
   // Show warning in console if API URL might be misconfigured
   useEffect(() => {
@@ -338,28 +291,26 @@ function MainApp() {
 
   // Listen to Firebase auth state changes
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    const unsubscribe = subscribeToAuthState(async (firebaseUser) => {
       setUser(firebaseUser)
 
       if (firebaseUser) {
         // Check if user is an admin
-        const adminRef = doc(db, 'admins', firebaseUser.uid)
-        const adminSnap = await getDoc(adminRef)
-        setIsAdmin(adminSnap.exists())
+        const adminStatus = await isUserAdmin(firebaseUser.uid)
+        setIsAdmin(adminStatus)
 
         // Check/create user approval document
-        const userRef = doc(db, 'users', firebaseUser.uid)
-        const userSnap = await getDoc(userRef)
+        const existingUser = await getUser(firebaseUser.uid)
 
-        if (!userSnap.exists()) {
+        if (!existingUser) {
           // Create new user document with pending status
-          const newUserData: UserApproval = {
+          const newUserData: UserRecord = {
             approved: false,
             email: firebaseUser.email || '',
             createdAt: new Date().toISOString()
           }
           try {
-            await setDoc(userRef, newUserData)
+            await createUser(firebaseUser.uid, newUserData)
             setUserApproval(newUserData)
           } catch (error) {
             console.error('Error creating user document:', error)
@@ -367,13 +318,13 @@ function MainApp() {
             setUserApproval(newUserData)
           }
         } else {
-          setUserApproval(userSnap.data() as UserApproval)
+          setUserApproval(existingUser)
         }
 
         // Listen for real-time approval status updates
-        const unsubscribeSnapshot = onSnapshot(userRef, (doc) => {
-          if (doc.exists()) {
-            setUserApproval(doc.data() as UserApproval)
+        const unsubscribeSnapshot = subscribeToUserApproval(firebaseUser.uid, (userData) => {
+          if (userData) {
+            setUserApproval(userData)
           }
         })
 
@@ -409,16 +360,6 @@ function MainApp() {
     }
   }, [analysis, analyzing, user, file, autoSaved])
 
-  // Auto-dismiss toast quickly (1.5 seconds)
-  useEffect(() => {
-    if (toastMessage) {
-      const timer = setTimeout(() => {
-        setToastMessage('')
-      }, 1500)
-      return () => clearTimeout(timer)
-    }
-  }, [toastMessage])
-
   // Heartbeat effect for connection status
   useEffect(() => {
     if (analyzing) {
@@ -428,6 +369,17 @@ function MainApp() {
       return () => clearInterval(interval)
     }
   }, [analyzing])
+
+  // Elapsed time effect for analysis progress
+  useEffect(() => {
+    if (analyzing && analysisStartTime) {
+      const interval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - analysisStartTime) / 1000)
+        setElapsedSeconds(elapsed)
+      }, 1000)
+      return () => clearInterval(interval)
+    }
+  }, [analyzing, analysisStartTime])
 
   // Waiting timer effect
   useEffect(() => {
@@ -466,11 +418,6 @@ function MainApp() {
     setIsReplaying(true)
   }
 
-
-  const showToast = (message: string) => {
-    setToastMessage(message)
-  }
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0]
     if (selectedFile) {
@@ -506,8 +453,7 @@ function MainApp() {
       const transcriptContent = await file.text()
 
       const now = new Date()
-      const dateStr = now.toLocaleDateString()
-      const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      const nowISO = now.toISOString()
 
       const analysisData = {
         userId: user.uid,
@@ -516,18 +462,22 @@ function MainApp() {
         transcriptContent, // Store the actual transcript text
         analysis,
         title: `${file.name}`,
-        savedAt: `${dateStr} at ${timeStr}`,
-        createdAt: now.toISOString(),
-        updatedAt: now.toISOString()
+        savedAt: formatDateTime(nowISO),
+        createdAt: nowISO,
+        updatedAt: nowISO,
+        // Sharing fields
+        shareId: generateShareId(),
+        shareMode: 'private' as 'private' | 'anyone' | 'specific',
+        sharedWith: [] as string[]
       }
 
-      const docRef = await addDoc(collection(db, 'analyses'), analysisData)
+      const docId = await createAnalysis(analysisData)
 
       if (!autoSave) {
         showToast('✓ Saved')
       }
 
-      return docRef.id
+      return docId
     } catch (err) {
       console.error('Error saving analysis:', err)
       if (!autoSave) {
@@ -551,6 +501,8 @@ function MainApp() {
     setAgentLogs([])
     setAutoSaved(false)  // Reset auto-save flag for new analysis
     setSavedAnalysisId(null)  // Reset saved analysis ID
+    setAnalysisStartTime(Date.now())
+    setElapsedSeconds(0)
 
     const formData = new FormData()
     formData.append('transcript', file)
@@ -694,9 +646,6 @@ function MainApp() {
           </div>
         </div>
 
-        <footer className="footer">
-          Interview Analyzer
-        </footer>
       </Layout>
     )
   }
@@ -797,6 +746,83 @@ function MainApp() {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {analyzing && !analysis && (
+          <div className="brewing-section">
+            <div className="brewing-container">
+              <div className="coffee-cup-brewing">
+                <div className="steam-container">
+                  <div className="steam steam-1"></div>
+                  <div className="steam steam-2"></div>
+                  <div className="steam steam-3"></div>
+                </div>
+                <div className="cup-body">☕</div>
+              </div>
+              <h2 className="brewing-title">Brewing Your Analysis...</h2>
+              <div className="time-estimate">
+                {(() => {
+                  const estimatedTotal = 120 // 2 minutes in seconds
+                  const minutes = Math.floor(elapsedSeconds / 60)
+                  const seconds = elapsedSeconds % 60
+                  const remaining = Math.max(0, estimatedTotal - elapsedSeconds)
+                  const remainingMin = Math.floor(remaining / 60)
+                  const remainingSec = remaining % 60
+
+                  return (
+                    <>
+                      <span className="time-elapsed">
+                        {minutes}:{seconds.toString().padStart(2, '0')}
+                      </span>
+                      <span className="time-separator">/</span>
+                      <span className="time-remaining">
+                        ~{remainingMin}:{remainingSec.toString().padStart(2, '0')} remaining
+                      </span>
+                    </>
+                  )
+                })()}
+              </div>
+              <div className="progress-bar-container">
+                {(() => {
+                  const steps = ['Initializing', 'Reading', 'Analyzing', 'Evaluating', 'Writing']
+                  let currentStep = 0
+                  if (agentLogs.length > 0) currentStep = 1
+                  if (agentLogs.length > 3) currentStep = 2
+                  if (agentLogs.length > 8) currentStep = 3
+                  if (agentLogs.length > 15) currentStep = 4
+
+                  return (
+                    <>
+                      <div className="progress-steps-horizontal">
+                        {steps.map((step, idx) => (
+                          <div
+                            key={step}
+                            className={`progress-dot ${idx < currentStep ? 'completed' : ''} ${idx === currentStep ? 'active' : ''}`}
+                          >
+                            <span className="dot"></span>
+                            <span className="dot-label">{step}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="progress-line">
+                        <div className="progress-fill" style={{ width: `${(currentStep / (steps.length - 1)) * 100}%` }}></div>
+                      </div>
+                    </>
+                  )
+                })()}
+              </div>
+              {agentLogs.length > 0 && (
+                <div className="latest-activity">
+                  {(() => {
+                    const lastLog = agentLogs[agentLogs.length - 1]
+                    const content = lastLog?.content || ''
+                    const cleaned = content.replace(/^\[.*?\]/, '').trim()
+                    return cleaned.length > 80 ? cleaned.substring(0, 80) + '...' : cleaned || 'Processing...'
+                  })()}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -933,7 +959,7 @@ function MainApp() {
                 {showDebug && (
                   <div className="debug-logs">
                     {agentLogs.map((log, i) => (
-                      <DebugLogEntry key={i} log={log} index={i} />
+                      <DebugLogEntry key={i} log={log} />
                     ))}
                   </div>
                 )}
@@ -963,42 +989,15 @@ function MainApp() {
                 </button>
               )}
               <button
-                onClick={() => {
-                  const markdownBody = document.querySelector('.markdown-body')
-                  if (markdownBody) {
-                    // Copy the rendered HTML as rich text
-                    const selection = window.getSelection()
-                    const range = document.createRange()
-                    range.selectNodeContents(markdownBody)
-                    selection?.removeAllRanges()
-                    selection?.addRange(range)
-                    document.execCommand('copy')
-                    selection?.removeAllRanges()
-                    showToast('✓ Copied')
-                  } else {
-                    // Fallback to markdown text
-                    navigator.clipboard.writeText(analysis)
-                    showToast('✓ Copied')
-                  }
-                }}
+                onClick={() => copyMarkdownContent('.markdown-body', analysis)}
                 className="copy-button"
                 title="Copy to clipboard"
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M5.75 4.75H10.25V1.75H5.75V4.75ZM4.5 1.5C4.5 0.947715 4.94772 0.5 5.5 0.5H10.5C11.0523 0.5 11.5 0.947715 11.5 1.5V5C11.5 5.55228 11.0523 6 10.5 6H5.5C4.94772 6 4.5 5.55228 4.5 5V1.5Z" fill="currentColor"/>
-                  <path d="M2.5 4.5C1.94772 4.5 1.5 4.94772 1.5 5.5V14C1.5 14.5523 1.94772 15 2.5 15H11C11.5523 15 12 14.5523 12 14V13H13.5V14C13.5 15.3807 12.3807 16.5 11 16.5H2.5C1.11929 16.5 0 15.3807 0 14V5.5C0 4.11929 1.11929 3 2.5 3H4V4.5H2.5Z" fill="currentColor" transform="translate(0.5, -0.5)"/>
-                </svg>
+                <CopyIcon />
               </button>
             </div>
 
-            <div className="markdown-body">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeHighlight]}
-              >
-                {analysis}
-              </ReactMarkdown>
-            </div>
+            <AnalysisMarkdown content={analysis} />
           </div>
         )}
 
@@ -1049,16 +1048,7 @@ function MainApp() {
         </div>
       )}
 
-      <footer className="footer">
-        Interview Analyzer
-      </footer>
-
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="toast-notification">
-          {toastMessage}
-        </div>
-      )}
+      <Toast message={toastMessage} />
 
     </Layout>
   )
@@ -1073,6 +1063,7 @@ function App() {
         <Route path="/admin" element={<Admin />} />
         <Route path="/history" element={<History />} />
         <Route path="/analysis/:analysisId" element={<AnalysisView />} />
+        <Route path="/shared/:shareId" element={<SharedView />} />
       </Routes>
     </Router>
   )
