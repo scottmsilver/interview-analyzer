@@ -20,10 +20,23 @@ export function TranscriptIcon({ size = 16 }: IconProps) {
   )
 }
 
+// Standard Android/Material share icon (three connected dots)
 export function ShareIcon({ size = 16 }: IconProps) {
   return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M6.5 8.5L9.5 11.5M6.5 8.5L9.5 5.5M6.5 8.5H2C1.44772 8.5 1 8.05228 1 7.5V3C1 2.44772 1.44772 2 2 2H5.5C6.05228 2 6.5 2.44772 6.5 3V5.5M9.5 11.5C9.5 12.8807 10.6193 14 12 14C13.3807 14 14.5 12.8807 14.5 11.5C14.5 10.1193 13.3807 9 12 9C10.6193 9 9.5 10.1193 9.5 11.5ZM9.5 5.5C9.5 6.88071 10.6193 8 12 8C13.3807 8 14.5 6.88071 14.5 5.5C14.5 4.11929 13.3807 3 12 3C10.6193 3 9.5 4.11929 9.5 5.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="18" cy="5" r="3" stroke="currentColor" strokeWidth="2"/>
+      <circle cx="6" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
+      <circle cx="18" cy="19" r="3" stroke="currentColor" strokeWidth="2"/>
+      <path d="M8.59 13.51L15.42 17.49M15.41 6.51L8.59 10.49" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+    </svg>
+  )
+}
+
+export function LinkIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   )
 }

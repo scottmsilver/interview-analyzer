@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import { getAnalysis, updateAnalysisSharing, getCurrentUser } from './api'
 import { Layout } from './Layout'
 import { Toast, AnalysisMarkdown, Loading, ErrorBox, AnalysisHeader } from './components'
-import { CopyIcon, TranscriptIcon, ShareIcon } from './icons'
+import { CopyIcon, TranscriptIcon, ShareIcon, LinkIcon } from './icons'
 import { useToast, useCopyToClipboard, useAdmin } from './hooks'
 import { type AnalysisData } from './types'
 import './AnalysisView.css'
@@ -83,7 +83,15 @@ export function AnalysisView() {
       })
 
       setShowShareModal(false)
-      showToast('✓ Sharing updated')
+
+      // Auto-copy link to clipboard for shareable modes
+      if (shareMode !== 'private' && analysis.shareId) {
+        const shareUrl = `${window.location.origin}/shared/${analysis.shareId}`
+        navigator.clipboard.writeText(shareUrl)
+        showToast('✓ Link copied to clipboard')
+      } else {
+        showToast('✓ Sharing updated')
+      }
     } catch (err) {
       console.error('Error saving share settings:', err)
       showToast('× Failed to save')
@@ -264,7 +272,10 @@ export function AnalysisView() {
                       value={`${window.location.origin}/shared/${analysis.shareId}`}
                       readOnly
                     />
-                    <button className="share-copy-btn" onClick={copyShareLink}>Copy</button>
+                    <button className="share-copy-btn" onClick={copyShareLink} title="Copy link">
+                      <LinkIcon size={14} />
+                      <span>Copy</span>
+                    </button>
                   </div>
                 </div>
               )}

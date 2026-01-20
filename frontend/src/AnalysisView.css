@@ -467,10 +467,17 @@
   cursor: pointer;
   font-size: 0.85rem;
   transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 .share-copy-btn:hover {
   background: #555;
+}
+
+.share-copy-btn:active {
+  background: #222;
 }
 
 .share-modal-footer {
