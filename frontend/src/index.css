@@ -106,33 +106,32 @@ button:focus-visible {
   letter-spacing: 0.02em;
 }
 
-/* Toast Notification */
+/* Toast Notification - bottom center snackbar style */
 .toast-notification {
   position: fixed;
-  top: 4.5rem;
+  bottom: 2rem;
   left: 50%;
   transform: translateX(-50%);
-  background: white;
-  color: #2a2a2a;
-  padding: 0.25rem 0.5rem;
-  border-radius: 12px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08),
-              0 1px 2px rgba(0, 0, 0, 0.1);
-  font-size: 0.7rem;
+  background: #323232;
+  color: white;
+  padding: 0.75rem 1.25rem;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15),
+              0 2px 4px rgba(0, 0, 0, 0.1);
+  font-size: 0.9rem;
   font-weight: 500;
   z-index: 2000;
   display: inline-block;
-  animation: toastSlideDown 0.2s ease-out,
-             toastFadeOut 0.15s ease-out 1.3s forwards;
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  line-height: 1;
+  animation: toastSlideUp 0.25s ease-out,
+             toastFadeOut 0.2s ease-out 1.3s forwards;
+  line-height: 1.2;
   white-space: nowrap;
-  max-width: fit-content;
+  max-width: calc(100vw - 2rem);
 }
 
-@keyframes toastSlideDown {
+@keyframes toastSlideUp {
   from {
-    transform: translateX(-50%) translateY(-20px);
+    transform: translateX(-50%) translateY(20px);
     opacity: 0;
   }
   to {
