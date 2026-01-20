@@ -10,6 +10,7 @@ import './AnalysisView.css'
 export function SharedView() {
   const { shareId } = useParams<{ shareId: string }>()
   const [user, setUser] = useState<User | null>(null)
+  const [authReady, setAuthReady] = useState(false)
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -17,15 +18,19 @@ export function SharedView() {
   const { toastMessage, showToast } = useToast()
   const { copyMarkdownContent } = useCopyToClipboard(showToast)
 
-  // Listen for auth state
+  // Listen for auth state - only fires once auth is initialized
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((currentUser) => {
       setUser(currentUser)
+      setAuthReady(true)
     })
     return () => unsubscribe()
   }, [])
 
+  // Load analysis once auth is ready
   useEffect(() => {
+    if (!authReady) return
+
     const loadSharedAnalysis = async () => {
       if (!shareId) {
         setError('No share ID provided')
@@ -49,8 +54,15 @@ export function SharedView() {
           return
         }
 
+        // For 'anyone' mode, no auth check needed
+        if (data.shareMode === 'anyone') {
+          setAnalysis(data)
+          setLoading(false)
+          return
+        }
+
+        // For 'specific' mode, check if user's email is in sharedWith
         if (data.shareMode === 'specific') {
-          // Need to check if current user's email is in sharedWith
           if (!user) {
             setError('Please sign in to view this shared analysis')
             setLoading(false)
@@ -61,10 +73,13 @@ export function SharedView() {
             setLoading(false)
             return
           }
+          setAnalysis(data)
+          setLoading(false)
+          return
         }
 
-        // shareMode === 'anyone' or user is in sharedWith list
-        setAnalysis(data)
+        // Fallback: if shareMode is undefined/null, treat as private
+        setError('This analysis is not shared')
         setLoading(false)
       } catch (err) {
         console.error('Error loading shared analysis:', err)
@@ -73,13 +88,8 @@ export function SharedView() {
       }
     }
 
-    // Wait a moment for auth to initialize
-    const timer = setTimeout(() => {
-      loadSharedAnalysis()
-    }, 500)
-
-    return () => clearTimeout(timer)
-  }, [shareId, user])
+    loadSharedAnalysis()
+  }, [shareId, user, authReady])
 
   const copyToClipboard = () => {
     if (!analysis) return
