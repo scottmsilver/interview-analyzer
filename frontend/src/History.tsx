@@ -1,10 +1,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getCurrentUser, subscribeToUserAnalyses, deleteAnalysis as apiDeleteAnalysis } from './api'
-import { Layout } from './Layout'
-import { Loading } from './components'
+import { subscribeToUserAnalyses, deleteAnalysis as apiDeleteAnalysis } from './api'
 import { type AnalysisData, getInterviewTypeLabel, formatDateTime, getErrorMessage } from './types'
-import { useAdmin } from './hooks'
+import { useAuth } from './App'
 import {
   createColumnHelper,
   flexRender,
@@ -20,31 +18,24 @@ type Analysis = AnalysisData & { id: string }
 const columnHelper = createColumnHelper<Analysis>()
 
 export function History() {
+  const { user } = useAuth()
   const [analyses, setAnalyses] = useState<Analysis[]>([])
-  const [loading, setLoading] = useState(true)
+  const [dataLoaded, setDataLoaded] = useState(false)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [sorting, setSorting] = useState<SortingState>([
-    { id: 'createdAt', desc: true }
+    { id: 'savedAt', desc: true }
   ])
   const navigate = useNavigate()
-  const isAdmin = useAdmin()
-
-  const user = getCurrentUser()
 
   useEffect(() => {
-    if (!user) {
-      navigate('/')
-      return
-    }
-
     // Listen for real-time updates to user's analyses
     const unsubscribe = subscribeToUserAnalyses(user.uid, (userAnalyses) => {
       setAnalyses(userAnalyses)
-      setLoading(false)
+      setDataLoaded(true)
     })
 
     return () => unsubscribe()
-  }, [navigate, user])
+  }, [user.uid])
 
   const handleDeleteAnalysis = async (analysisId: string, title: string) => {
     if (!confirm(`Are you sure you want to delete "${title}"?`)) {
@@ -142,19 +133,13 @@ export function History() {
     getSortedRowModel: getSortedRowModel(),
   })
 
-  if (loading) {
-    return (
-      <Layout user={user} isAdmin={isAdmin} currentView="history">
-        <div className="history-container">
-          <Loading message="Loading analyses..." />
-        </div>
-      </Layout>
-    )
+  // Return null while loading to prevent flash
+  if (!dataLoaded) {
+    return null
   }
 
   return (
-    <Layout user={user} isAdmin={isAdmin} currentView="history">
-      <div className="history-container">
+    <div className="history-container">
         {analyses.length === 0 ? (
           <div className="empty-state">
             <p className="empty-message">No analyses yet</p>
@@ -209,7 +194,6 @@ export function History() {
             </table>
           </div>
         )}
-      </div>
-    </Layout>
+    </div>
   )
 }

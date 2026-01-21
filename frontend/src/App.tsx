@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, useNavigate, Outlet, useOutletContext, useLocation } from 'react-router-dom'
 import 'github-markdown-css/github-markdown-light.css'
 import 'highlight.js/styles/github.css'
 import './App.css'
@@ -20,11 +20,22 @@ import {
   createUser,
   subscribeToUserApproval,
   createAnalysis,
+  getCachedCriteria,
   type User,
   type UserRecord,
 } from './api'
 
-// UserRecord from API already has: approved, email, createdAt, approvedAt?
+// Auth context type for child routes
+export interface AuthContext {
+  user: User
+  userApproval: UserRecord
+  isAdmin: boolean
+}
+
+// Hook for child components to access auth context
+export function useAuth() {
+  return useOutletContext<AuthContext>()
+}
 
 // Component for debug log entry
 function DebugLogEntry({ log }: { log: { content: string, raw: any } }) {
@@ -240,54 +251,22 @@ function DebugLogEntry({ log }: { log: { content: string, raw: any } }) {
   )
 }
 
-function MainApp() {
-  const navigate = useNavigate()
+// Shared authenticated layout - handles auth and renders header once
+function AuthenticatedLayout() {
+  const location = useLocation()
   const [user, setUser] = useState<User | null>(null)
   const [userApproval, setUserApproval] = useState<UserRecord | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [file, setFile] = useState<File | null>(null)
-  const [interviewType, setInterviewType] = useState<string>('google-apm')
-  const [analyzing, setAnalyzing] = useState(false)
-  const [analysis, setAnalysis] = useState('')
-  const [error, setError] = useState('')
-  const [statusMessage, setStatusMessage] = useState('')
-  const [agentLogs, setAgentLogs] = useState<{content: string, raw: any}[]>([])
-  const [showLogs, setShowLogs] = useState(false)
-  const [showDebug, setShowDebug] = useState(false)
-  const [isReplaying, setIsReplaying] = useState(false)
-  const [replayIndex, setReplayIndex] = useState(0)
-  const [autoSaved, setAutoSaved] = useState(false)
-  const [savedAnalysisId, setSavedAnalysisId] = useState<string | null>(null)
-  const [showPasteDialog, setShowPasteDialog] = useState(false)
-  const [pastedText, setPastedText] = useState('')
+  const [authLoaded, setAuthLoaded] = useState(false)
 
-  const { toastMessage, showToast } = useToast()
-  const { copyMarkdownContent } = useCopyToClipboard(showToast)
-  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'thinking' | 'waiting'>('idle')
-  const [, setLastHeartbeat] = useState(Date.now()) // Used for triggering re-renders for heartbeat animation
-  const [waitingStartTime, setWaitingStartTime] = useState<number | null>(null)
-  const [waitingDuration, setWaitingDuration] = useState(0)
-  const [analysisStartTime, setAnalysisStartTime] = useState<number | null>(null)
-  const [elapsedSeconds, setElapsedSeconds] = useState(0)
-
-  // API URL configuration
-  // In production, you need to deploy your backend somewhere (e.g., Heroku, Railway, Render)
-  // and update this URL accordingly
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:9002'
-
-  // Show warning in console if API URL might be misconfigured
-  useEffect(() => {
-    if (window.location.hostname !== 'localhost' &&
-        window.location.hostname !== '127.0.0.1' &&
-        API_URL.includes('localhost')) {
-      console.warn('⚠️ API URL is set to localhost but app is running in production!')
-      console.warn('To fix this:')
-      console.warn('1. Deploy your backend to a service like Heroku, Railway, or Render')
-      console.warn('2. Create a .env.production file with VITE_API_URL=https://your-backend-url.com')
-      console.warn('3. Rebuild and redeploy the frontend')
-    }
-  }, [])
+  // Determine currentView from pathname
+  const getCurrentView = (): 'main' | 'admin' | 'history' | 'analysis' => {
+    const path = location.pathname
+    if (path === '/admin') return 'admin'
+    if (path === '/history') return 'history'
+    if (path.startsWith('/analysis/')) return 'analysis'
+    return 'main'
+  }
 
   // Listen to Firebase auth state changes
   useEffect(() => {
@@ -314,7 +293,6 @@ function MainApp() {
             setUserApproval(newUserData)
           } catch (error) {
             console.error('Error creating user document:', error)
-            // Set user approval anyway so they see the pending screen
             setUserApproval(newUserData)
           }
         } else {
@@ -328,17 +306,118 @@ function MainApp() {
           }
         })
 
-        setLoading(false)
+        setAuthLoaded(true)
         return () => unsubscribeSnapshot()
       } else {
         setUserApproval(null)
         setIsAdmin(false)
-        setLoading(false)
+        setAuthLoaded(true)
       }
     })
 
-    // Cleanup subscription
     return () => unsubscribe()
+  }, [])
+
+  // Show nothing while loading to prevent flash
+  if (!authLoaded) {
+    return null
+  }
+
+  // Show login if not authenticated
+  if (!user) {
+    return <Login onLogin={() => setAuthLoaded(true)} />
+  }
+
+  // Show pending approval if not approved
+  if (!userApproval || userApproval.approved !== true) {
+    if (!userApproval) {
+      return (
+        <div className="app">
+          <div className="container">
+            <div className="loading">Loading...</div>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <Layout user={user} isAdmin={isAdmin} currentView="main">
+        <div className="pending-approval">
+          <div className="pending-approval-card">
+            <h2>Account Pending Approval</h2>
+            <p>Thank you for signing up! Your account is currently pending approval.</p>
+            <p>
+              You'll receive access once an administrator approves your account.
+              This typically happens within 24 hours.
+            </p>
+            <div className="pending-info">
+              <p><strong>Email:</strong> {user.email}</p>
+              <p><strong>Signed up:</strong> {new Date(userApproval.createdAt).toLocaleString()}</p>
+            </div>
+            <p className="pending-note">
+              This page will automatically update when you're approved - no need to refresh!
+            </p>
+          </div>
+        </div>
+      </Layout>
+    )
+  }
+
+  // Authenticated and approved - render layout with child routes
+  return (
+    <Layout user={user} isAdmin={isAdmin} currentView={getCurrentView()}>
+      <Outlet context={{ user, userApproval, isAdmin } satisfies AuthContext} />
+    </Layout>
+  )
+}
+
+// Main analyze page content (no Layout wrapper - handled by AuthenticatedLayout)
+function MainContent() {
+  const navigate = useNavigate()
+  const { user } = useAuth()
+  const [file, setFile] = useState<File | null>(null)
+  const [interviewType, setInterviewType] = useState<string>('google-apm')
+  const [analysisMethod, setAnalysisMethod] = useState<'direct-api' | 'agent-sdk'>('direct-api')
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analysis, setAnalysis] = useState('')
+  const [error, setError] = useState('')
+  const [statusMessage, setStatusMessage] = useState('')
+  const [agentLogs, setAgentLogs] = useState<{content: string, raw: any}[]>([])
+  const [showLogs, setShowLogs] = useState(false)
+  const [showDebug, setShowDebug] = useState(false)
+  const [isReplaying, setIsReplaying] = useState(false)
+  const [replayIndex, setReplayIndex] = useState(0)
+  const [autoSaved, setAutoSaved] = useState(false)
+  const [savedAnalysisId, setSavedAnalysisId] = useState<string | null>(null)
+  const [showPasteDialog, setShowPasteDialog] = useState(false)
+  const [pastedText, setPastedText] = useState('')
+  const [showMethodDropdown, setShowMethodDropdown] = useState(false)
+
+  const { toastMessage, showToast } = useToast()
+  const { copyMarkdownContent } = useCopyToClipboard(showToast)
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'thinking' | 'waiting'>('idle')
+  const [, setLastHeartbeat] = useState(Date.now()) // Used for triggering re-renders for heartbeat animation
+  const [waitingStartTime, setWaitingStartTime] = useState<number | null>(null)
+  const [waitingDuration, setWaitingDuration] = useState(0)
+  const [analysisStartTime, setAnalysisStartTime] = useState<number | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+
+  // API URL configuration
+  // In production, you need to deploy your backend somewhere (e.g., Heroku, Railway, Render)
+  // and update this URL accordingly
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:9002'
+
+  // Show warning in console if API URL might be misconfigured
+  useEffect(() => {
+    if (window.location.hostname !== 'localhost' &&
+        window.location.hostname !== '127.0.0.1' &&
+        API_URL.includes('localhost')) {
+      console.warn('⚠️ API URL is set to localhost but app is running in production!')
+      console.warn('To fix this:')
+      console.warn('1. Deploy your backend to a service like Heroku, Railway, or Render')
+      console.warn('2. Create a .env.production file with VITE_API_URL=https://your-backend-url.com')
+      console.warn('3. Rebuild and redeploy the frontend')
+    }
   }, [])
 
   // Auto-save when analysis is complete but don't navigate
@@ -412,6 +491,19 @@ function MainApp() {
       setReplayIndex(agentLogs.length)
     }
   }, [agentLogs.length, isReplaying])
+
+  // Close method dropdown when clicking outside
+  useEffect(() => {
+    if (!showMethodDropdown) return
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (!target.closest('.method-dropdown')) {
+        setShowMethodDropdown(false)
+      }
+    }
+    document.addEventListener('click', handleClickOutside)
+    return () => document.removeEventListener('click', handleClickOutside)
+  }, [showMethodDropdown])
 
   const startReplay = () => {
     setReplayIndex(0)
@@ -496,7 +588,7 @@ function MainApp() {
     setAnalyzing(true)
     setAnalysis('')
     setError('')
-    setStatusMessage('Connecting to AI agent...')
+    setStatusMessage('Checking for cached criteria...')
     setConnectionStatus('connecting')
     setAgentLogs([])
     setAutoSaved(false)  // Reset auto-save flag for new analysis
@@ -504,9 +596,33 @@ function MainApp() {
     setAnalysisStartTime(Date.now())
     setElapsedSeconds(0)
 
+    // Try to get cached criteria from Firestore
+    let cachedCriteria: string | null = null
+    try {
+      cachedCriteria = await getCachedCriteria(interviewType)
+      if (cachedCriteria) {
+        setStatusMessage('Using cached interview criteria...')
+        setAgentLogs(prev => [...prev, {
+          content: '[system] Using cached interview criteria (skipping web search)',
+          raw: { type: 'cache_hit', interviewType }
+        }])
+      } else {
+        setStatusMessage('No cached criteria, will research current standards...')
+      }
+    } catch (err) {
+      console.warn('Failed to fetch cached criteria:', err)
+      // Continue without cache
+    }
+
+    setStatusMessage('Connecting to AI agent...')
+
     const formData = new FormData()
     formData.append('transcript', file)
     formData.append('interviewType', interviewType)
+    formData.append('method', analysisMethod)
+    if (cachedCriteria) {
+      formData.append('cachedCriteria', cachedCriteria)
+    }
 
     try {
       const response = await fetch(`${API_URL}/api/analyze/stream`, {
@@ -594,66 +710,10 @@ function MainApp() {
     }
   }
 
-
-  // Show loading state while checking auth
-  if (loading) {
-    return (
-      <div className="app">
-        <div className="container">
-          <div className="loading">Loading...</div>
-        </div>
-      </div>
-    )
-  }
-
-  // Show login if not authenticated
-  if (!user) {
-    return <Login onLogin={() => setLoading(false)} />
-  }
-
-  // Show pending approval message if not approved (must be explicitly approved)
-  // Also catches the case where userApproval is null/undefined
-  if (user && (!userApproval || userApproval.approved !== true)) {
-    // If userApproval hasn't loaded yet, show loading state
-    if (!userApproval) {
-      return (
-        <div className="app">
-          <div className="container">
-            <div className="loading">Loading...</div>
-          </div>
-        </div>
-      )
-    }
-
-    // Show the full pending approval screen
-    return (
-      <Layout user={user} isAdmin={isAdmin} currentView="main">
-        <div className="pending-approval">
-          <div className="pending-approval-card">
-            <h2>⏳ Account Pending Approval</h2>
-            <p>Thank you for signing up! Your account is currently pending approval.</p>
-            <p>
-              You'll receive access once an administrator approves your account.
-              This typically happens within 24 hours.
-            </p>
-            <div className="pending-info">
-              <p><strong>Email:</strong> {user.email}</p>
-              <p><strong>Signed up:</strong> {new Date(userApproval.createdAt).toLocaleString()}</p>
-            </div>
-            <p className="pending-note">
-              This page will automatically update when you're approved - no need to refresh!
-            </p>
-          </div>
-        </div>
-
-      </Layout>
-    )
-  }
-
-  // At this point, user is authenticated, approved, and not an admin
+  // Content rendered inside AuthenticatedLayout (no Layout wrapper needed)
   return (
-    <Layout user={user} isAdmin={isAdmin} currentView="main">
-        {!analysis && !analyzing && (
+    <>
+      {!analysis && !analyzing && (
           <div className="welcome-section">
             <div className="upload-bar-centered">
               <select
@@ -694,6 +754,44 @@ function MainApp() {
                 </button>
               </div>
 
+              <div className="method-dropdown">
+                <button
+                  type="button"
+                  onClick={() => setShowMethodDropdown(!showMethodDropdown)}
+                  disabled={analyzing}
+                  className="method-trigger"
+                >
+                  {analysisMethod === 'direct-api' ? 'Fast' : 'Deep'}
+                  <span className="dropdown-arrow">▾</span>
+                </button>
+                {showMethodDropdown && (
+                  <div className="method-options">
+                    <button
+                      type="button"
+                      className={`method-option ${analysisMethod === 'direct-api' ? 'selected' : ''}`}
+                      onClick={() => {
+                        setAnalysisMethod('direct-api')
+                        setShowMethodDropdown(false)
+                      }}
+                    >
+                      <span className="method-name">Fast</span>
+                      <span className="method-desc">~45 seconds, web search</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`method-option ${analysisMethod === 'agent-sdk' ? 'selected' : ''}`}
+                      onClick={() => {
+                        setAnalysisMethod('agent-sdk')
+                        setShowMethodDropdown(false)
+                      }}
+                    >
+                      <span className="method-name">Deep</span>
+                      <span className="method-desc">~2 minutes, thorough research</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <button
                 onClick={analyzeInterview}
                 disabled={!file || analyzing}
@@ -721,7 +819,7 @@ function MainApp() {
                 </p>
                 <p className="welcome-subtitle">
                   Upload your interview transcript above for thoughtful, constructive feedback.
-                  Analysis takes about 2 minutes.
+                  Fast analysis takes ~45 seconds, Deep takes ~2 minutes.
                 </p>
                 <div className="welcome-tips">
                   <div className="tip">
@@ -1049,8 +1147,7 @@ function MainApp() {
       )}
 
       <Toast message={toastMessage} />
-
-    </Layout>
+    </>
   )
 }
 
@@ -1059,11 +1156,16 @@ function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<MainApp />} />
-        <Route path="/admin" element={<Admin />} />
-        <Route path="/history" element={<History />} />
-        <Route path="/analysis/:analysisId" element={<AnalysisView />} />
+        {/* Public route - no auth needed */}
         <Route path="/shared/:shareId" element={<SharedView />} />
+
+        {/* Protected routes with shared layout */}
+        <Route element={<AuthenticatedLayout />}>
+          <Route path="/" element={<MainContent />} />
+          <Route path="/admin" element={<Admin />} />
+          <Route path="/history" element={<History />} />
+          <Route path="/analysis/:analysisId" element={<AnalysisView />} />
+        </Route>
       </Routes>
     </Router>
   )

@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { getAnalysis, updateAnalysisSharing, getCurrentUser } from './api'
-import { Layout } from './Layout'
+import { getAnalysis, updateAnalysisSharing } from './api'
 import { Toast, AnalysisMarkdown, Loading, ErrorBox, AnalysisHeader } from './components'
 import { CopyIcon, TranscriptIcon, ShareIcon, LinkIcon } from './icons'
-import { useToast, useCopyToClipboard, useAdmin } from './hooks'
+import { useToast, useCopyToClipboard } from './hooks'
 import { type AnalysisData } from './types'
+import { useAuth } from './App'
 import './AnalysisView.css'
 
 export function AnalysisView() {
+  const { user } = useAuth()
   const { analysisId } = useParams<{ analysisId: string }>()
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -21,7 +22,6 @@ export function AnalysisView() {
 
   const { toastMessage, showToast } = useToast()
   const { copyMarkdownContent, copyText } = useCopyToClipboard(showToast)
-  const isAdmin = useAdmin()
 
   useEffect(() => {
     const loadAnalysis = async () => {
@@ -106,27 +106,18 @@ export function AnalysisView() {
     copyText(shareUrl, '✓ Link copied')
   }
 
-  const currentUser = getCurrentUser()
-  const isOwner = currentUser?.uid === analysis?.userId
+  const isOwner = user.uid === analysis?.userId
 
   if (loading) {
-    return (
-      <Layout user={currentUser} isAdmin={isAdmin} currentView="analysis">
-        <Loading message="Loading analysis..." />
-      </Layout>
-    )
+    return <Loading message="Loading analysis..." />
   }
 
   if (error || !analysis) {
-    return (
-      <Layout user={currentUser} isAdmin={isAdmin} currentView="analysis">
-        <ErrorBox message={error || 'Analysis not found'} />
-      </Layout>
-    )
+    return <ErrorBox message={error || 'Analysis not found'} />
   }
 
   return (
-    <Layout user={currentUser} isAdmin={isAdmin} currentView="analysis">
+    <>
       <AnalysisHeader
         title={analysis.title}
         interviewType={analysis.interviewType}
@@ -293,6 +284,6 @@ export function AnalysisView() {
           </div>
         </div>
       )}
-    </Layout>
+    </>
   )
 }

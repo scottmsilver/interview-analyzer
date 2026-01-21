@@ -1,14 +1,13 @@
 import { useState, useEffect, useMemo } from 'react'
 import {
-  getCurrentUser,
   subscribeToAllUsers,
   subscribeToAdminData,
   approveUser as apiApproveUser,
   updateAdminGmail,
   type UserRecord,
 } from './api'
-import { Layout } from './Layout'
 import { Loading } from './components'
+import { useAuth } from './App'
 import { formatDateTime, getErrorMessage } from './types'
 import {
   createColumnHelper,
@@ -26,12 +25,12 @@ type PendingUser = UserRecord & { id: string }
 const columnHelper = createColumnHelper<PendingUser>()
 
 export function Admin() {
+  const { user } = useAuth()
   const [users, setUsers] = useState<PendingUser[]>([])
   const [loading, setLoading] = useState(true)
   const [approving, setApproving] = useState<string | null>(null)
   const [gmailAuthorized, setGmailAuthorized] = useState(false)
   const [sorting, setSorting] = useState<SortingState>([])
-  const isAdmin = true // Admin page is only accessible by admins
 
   // Define columns
   const columns = useMemo(
@@ -112,8 +111,6 @@ export function Admin() {
     },
   })
 
-  const currentUser = getCurrentUser()
-
   useEffect(() => {
     // Listen for real-time updates to all users
     const unsubscribe = subscribeToAllUsers((usersList) => {
@@ -126,14 +123,12 @@ export function Admin() {
 
   useEffect(() => {
     // Check if admin has authorized Gmail
-    if (!currentUser) return
-
-    const unsubscribe = subscribeToAdminData(currentUser.uid, (data) => {
+    const unsubscribe = subscribeToAdminData(user.uid, (data) => {
       setGmailAuthorized(!!data?.gmailTokens)
     })
 
     return () => unsubscribe()
-  }, [currentUser])
+  }, [user.uid])
 
   const handleApproveUser = async (userId: string) => {
     setApproving(userId)
@@ -148,21 +143,17 @@ export function Admin() {
   }
 
   const authorizeGmail = () => {
-    if (!currentUser) return
-
-    const authUrl = `https://us-central1-interview-analyzer-prod.cloudfunctions.net/authorizeGmail?adminUid=${currentUser.uid}`
+    const authUrl = `https://us-central1-interview-analyzer-prod.cloudfunctions.net/authorizeGmail?adminUid=${user.uid}`
     window.open(authUrl, '_blank', 'width=600,height=700')
   }
 
   const disconnectGmail = async () => {
-    if (!currentUser) return
-
     if (!confirm('Are you sure you want to disconnect Gmail? You will need to re-authorize to send approval emails.')) {
       return
     }
 
     try {
-      await updateAdminGmail(currentUser.uid, null, null)
+      await updateAdminGmail(user.uid, null, null)
     } catch (error) {
       console.error('Error disconnecting Gmail:', error)
       alert('Error disconnecting Gmail: ' + getErrorMessage(error))
@@ -170,16 +161,11 @@ export function Admin() {
   }
 
   if (loading) {
-    return (
-      <Layout user={currentUser} isAdmin={true} currentView="admin">
-        <Loading message="Loading admin dashboard..." />
-      </Layout>
-    )
+    return <Loading message="Loading admin dashboard..." />
   }
 
   return (
-    <Layout user={currentUser} isAdmin={isAdmin} currentView="admin">
-      <div className="admin-container">
+    <div className="admin-container">
         {/* Gmail Section */}
         <div className="gmail-section">
           <div className="section-content">
@@ -306,7 +292,6 @@ export function Admin() {
             </>
           )}
         </div>
-      </div>
-    </Layout>
+    </div>
   )
 }

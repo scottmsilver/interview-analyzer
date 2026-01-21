@@ -6,13 +6,15 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import dotenv from 'dotenv';
-import { analyzeInterview, analyzeInterviewSync, AnalysisOptions } from './analyzer.js';
+import { analyzeInterview, analyzeInterviewDirectAPI, analyzeInterviewSync, AnalysisOptions, AnalysisMethod } from './analyzer.js';
+import { refreshCriteriaCache, getAllCachedCriteria } from './criteria-cache.js';
+import { isFirebaseConfigured } from './firebase-admin.js';
 
 // Load environment variables
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 9002;
 
 // Configure CORS
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
@@ -20,7 +22,8 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175',
-  'http://localhost:5176'
+  'http://localhost:5176',
+  'https://interview-analyzer-web.fly.dev'
 ];
 
 app.use(cors({
@@ -103,6 +106,13 @@ app.post('/api/analyze/stream', upload.single('transcript'), async (req: Request
     // Get interview type from form data (default to google-apm)
     const interviewType = (req.body.interviewType as AnalysisOptions['interviewType']) || 'google-apm';
 
+    // Get cached criteria if provided (from frontend Firestore cache)
+    const cachedCriteria = req.body.cachedCriteria as string | undefined;
+
+    // Get analysis method (default to direct-api for speed)
+    const method = (req.body.method as AnalysisMethod) || 'direct-api';
+    const methodLabel = method === 'agent-sdk' ? 'Agent SDK (thorough)' : 'Direct API (fast)';
+
     // Set up Server-Sent Events (SSE) for streaming
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -116,13 +126,16 @@ app.post('/api/analyze/stream', upload.single('transcript'), async (req: Request
     // Send initial message
     res.write(`data: ${JSON.stringify({
       type: 'start',
-      message: 'Starting analysis...',
+      message: `Starting analysis using ${methodLabel}...`,
+      method,
       timestamp: new Date().toISOString()
     })}\n\n`);
     res.flushHeaders(); // Force headers to be sent immediately
 
-    // Run analysis
-    const generator = await analyzeInterview(transcript, { interviewType });
+    // Run analysis with selected method
+    const generator = method === 'agent-sdk'
+      ? await analyzeInterview(transcript, { interviewType, cachedCriteria })
+      : await analyzeInterviewDirectAPI(transcript, { interviewType, cachedCriteria });
 
     for await (const message of generator) {
       const data = JSON.stringify({
@@ -203,8 +216,11 @@ app.post('/api/analyze', upload.single('transcript'), async (req: Request, res: 
     // Get interview type
     const interviewType = (req.body.interviewType as AnalysisOptions['interviewType']) || 'google-apm';
 
-    // Run analysis
-    const analysis = await analyzeInterviewSync(transcript, { interviewType });
+    // Get cached criteria if provided
+    const cachedCriteria = req.body.cachedCriteria as string | undefined;
+
+    // Run analysis with optional cached criteria
+    const analysis = await analyzeInterviewSync(transcript, { interviewType, cachedCriteria });
 
     res.json({
       success: true,
@@ -255,6 +271,78 @@ app.get('/api/interview-types', (req: Request, res: Response) => {
   });
 });
 
+/**
+ * Admin: Refresh criteria cache for an interview type
+ * Requires ADMIN_API_KEY header for authentication
+ */
+app.post('/api/admin/refresh-criteria', async (req: Request, res: Response) => {
+  // Simple API key auth for admin endpoints
+  const adminKey = req.headers['x-admin-key'];
+  if (!process.env.ADMIN_API_KEY || adminKey !== process.env.ADMIN_API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized - invalid admin key' });
+  }
+
+  if (!isFirebaseConfigured()) {
+    return res.status(500).json({
+      error: 'Firebase not configured - cannot save to cache'
+    });
+  }
+
+  const { interviewType } = req.body;
+  const validTypes = ['google-apm', 'meta-pm', 'amazon-pm', 'generic'];
+
+  if (!interviewType || !validTypes.includes(interviewType)) {
+    return res.status(400).json({
+      error: 'Invalid interview type',
+      validTypes
+    });
+  }
+
+  try {
+    console.log(`[Admin] Refreshing criteria cache for ${interviewType}...`);
+    const criteria = await refreshCriteriaCache(interviewType);
+
+    res.json({
+      success: true,
+      interviewType,
+      criteriaLength: criteria.length,
+      message: `Cache refreshed for ${interviewType}`
+    });
+  } catch (error) {
+    console.error('[Admin] Error refreshing criteria:', error);
+    res.status(500).json({
+      error: 'Failed to refresh criteria cache',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * Admin: Get all cached criteria
+ */
+app.get('/api/admin/criteria-cache', async (req: Request, res: Response) => {
+  const adminKey = req.headers['x-admin-key'];
+  if (!process.env.ADMIN_API_KEY || adminKey !== process.env.ADMIN_API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized - invalid admin key' });
+  }
+
+  try {
+    const cached = await getAllCachedCriteria();
+    res.json({
+      configured: isFirebaseConfigured(),
+      cache: cached.map(c => ({
+        interviewType: c.interviewType,
+        lastUpdated: c.lastUpdated?.toDate?.() || c.lastUpdated,
+        source: c.source,
+        criteriaLength: c.criteria?.length || 0
+      }))
+    });
+  } catch (error) {
+    console.error('[Admin] Error getting cache:', error);
+    res.status(500).json({ error: 'Failed to get cache' });
+  }
+});
+
 // Error handling middleware
 app.use((err: Error, req: Request, res: Response, next: any) => {
   console.error('Server error:', err);
@@ -269,11 +357,15 @@ app.listen(PORT, () => {
   console.log(`\n🚀 Interview Analyzer API Server`);
   console.log(`📡 Listening on port ${PORT}`);
   console.log(`🔑 API Key configured: ${!!process.env.ANTHROPIC_API_KEY}`);
+  console.log(`🔥 Firebase configured: ${isFirebaseConfigured()}`);
+  console.log(`🔐 Admin API configured: ${!!process.env.ADMIN_API_KEY}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`\n📚 Endpoints:`);
-  console.log(`   GET  /health                - Health check`);
-  console.log(`   GET  /api/interview-types   - List supported interview types`);
-  console.log(`   POST /api/analyze/stream    - Analyze interview (streaming)`);
-  console.log(`   POST /api/analyze           - Analyze interview (non-streaming)`);
+  console.log(`   GET  /health                     - Health check`);
+  console.log(`   GET  /api/interview-types        - List supported interview types`);
+  console.log(`   POST /api/analyze/stream         - Analyze interview (streaming)`);
+  console.log(`   POST /api/analyze                - Analyze interview (non-streaming)`);
+  console.log(`   POST /api/admin/refresh-criteria - Refresh criteria cache (admin)`);
+  console.log(`   GET  /api/admin/criteria-cache   - View cached criteria (admin)`);
   console.log(`\n✨ Ready to analyze interviews!\n`);
 });

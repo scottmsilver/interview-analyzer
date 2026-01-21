@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react'
-import { isUserAdmin, getCurrentUser } from './api'
 
 export function useToast(duration = 1500) {
   const [message, setMessage] = useState('')
@@ -42,26 +41,4 @@ export function useCopyToClipboard(showToast: (msg: string) => void) {
   }, [showToast])
 
   return { copyMarkdownContent, copyText }
-}
-
-export function useAdmin() {
-  const [admin, setAdmin] = useState(false)
-
-  useEffect(() => {
-    const checkAdmin = async () => {
-      const user = getCurrentUser()
-      if (!user) return
-
-      try {
-        const result = await isUserAdmin(user.uid)
-        setAdmin(result)
-      } catch (err) {
-        console.error('Error checking admin status:', err)
-      }
-    }
-
-    checkAdmin()
-  }, [])
-
-  return admin
 }

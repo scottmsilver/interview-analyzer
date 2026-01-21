@@ -1,11 +1,79 @@
 /**
- * Core interview analysis logic using Claude Agent SDK
+ * Core interview analysis logic using Claude Agent SDK or Direct API
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import Anthropic from '@anthropic-ai/sdk';
+
+// Lazy initialization to ensure env vars are loaded
+let anthropic: Anthropic | null = null;
+function getAnthropicClient(): Anthropic {
+  if (!anthropic) {
+    anthropic = new Anthropic();
+  }
+  return anthropic;
+}
+
+export type AnalysisMethod = 'agent-sdk' | 'direct-api';
 
 export interface AnalysisOptions {
   interviewType: 'google-apm' | 'meta-pm' | 'amazon-pm' | 'generic';
+  cachedCriteria?: string;  // Pre-fetched interview criteria to skip web search
+  method?: AnalysisMethod;  // Which analysis method to use (default: agent-sdk)
+}
+
+// Web search tool definition for Direct API method
+const webSearchTool: Anthropic.Tool = {
+  name: 'web_search',
+  description: 'Search the web for current information about interview standards and evaluation criteria.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      query: {
+        type: 'string',
+        description: 'The search query'
+      }
+    },
+    required: ['query']
+  }
+};
+
+// Brave Search API integration
+async function braveWebSearch(searchQuery: string): Promise<string> {
+  const apiKey = process.env.BRAVE_API_KEY;
+  if (!apiKey) {
+    return 'Web search unavailable (BRAVE_API_KEY not configured).';
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(searchQuery)}&count=5`,
+      {
+        headers: {
+          'Accept': 'application/json',
+          'X-Subscription-Token': apiKey
+        }
+      }
+    );
+
+    if (!response.ok) {
+      return `Search failed: ${response.status}`;
+    }
+
+    const data = await response.json() as {
+      web?: { results?: Array<{ title: string; url: string; description: string }> }
+    };
+
+    if (!data.web?.results?.length) {
+      return 'No search results found.';
+    }
+
+    return data.web.results.map((r, i) =>
+      `${i + 1}. **${r.title}**\n   ${r.description}\n   Source: ${r.url}`
+    ).join('\n\n');
+  } catch (error) {
+    return `Search error: ${error instanceof Error ? error.message : 'Unknown'}`;
+  }
 }
 
 export interface AnalysisMessage {
@@ -18,7 +86,72 @@ export interface AnalysisMessage {
 /**
  * Build the analysis prompt based on interview type
  */
-function buildAnalysisPrompt(transcript: string, interviewType: string): string {
+function buildAnalysisPrompt(transcript: string, interviewType: string, cachedCriteria?: string): string {
+  // Build the workflow steps - skip research if we have cached criteria
+  const getWorkflowSteps = (researchQuery: string) => {
+    if (cachedCriteria) {
+      // Use cached criteria, skip web search
+      return `
+CURRENT INTERVIEW STANDARDS (cached):
+${cachedCriteria}
+
+TASK - MULTI-STEP WORKFLOW:
+1. **Parse Transcript**: Identify each distinct question asked and the candidate's response
+2. **Evaluate Each Question**: For each question, provide:
+   - Question type (product design, strategic insights, analytical, etc.)
+   - Overall score out of 10
+   - Structure quality (did they state their framework upfront?)
+   - Key strengths with specific timestamps (format: HH:MM:SS)
+   - Critical weaknesses with specific timestamps
+   - What they missed or should have done differently
+   - Comparison to what a strong candidate would do
+
+3. **Overall Assessment**: Provide:
+   - Overall interview score out of 10
+   - Would they pass the bar? (Yes/No/Borderline)
+   - Top 3 strengths across the entire interview
+   - Top 3 critical weaknesses
+   - Talk-to-listen ratio estimate (should be ~60:40)
+
+4. **Actionable Recommendations**: Provide 5-7 specific, actionable recommendations for improvement
+
+5. **Self-Review**: Before outputting, verify:
+   - Did I provide specific timestamps for key moments?
+   - Did I compare to the standards provided?
+   - Did I give concrete examples, not just generic feedback?
+   - Are my recommendations actionable?`;
+    } else {
+      // No cache, do web search first
+      return `
+TASK - MULTI-STEP WORKFLOW:
+1. **Research Current Standards**: Web search for "${researchQuery}" to understand the current bar
+2. **Parse Transcript**: Identify each distinct question asked and the candidate's response
+3. **Evaluate Each Question**: For each question, provide:
+   - Question type (product design, strategic insights, analytical, etc.)
+   - Overall score out of 10
+   - Structure quality (did they state their framework upfront?)
+   - Key strengths with specific timestamps (format: HH:MM:SS)
+   - Critical weaknesses with specific timestamps
+   - What they missed or should have done differently
+   - Comparison to what a strong candidate would do
+
+4. **Overall Assessment**: Provide:
+   - Overall interview score out of 10
+   - Would they pass the bar? (Yes/No/Borderline)
+   - Top 3 strengths across the entire interview
+   - Top 3 critical weaknesses
+   - Talk-to-listen ratio estimate (should be ~60:40)
+
+5. **Actionable Recommendations**: Provide 5-7 specific, actionable recommendations for improvement
+
+6. **Self-Review**: Before outputting, verify:
+   - Did I provide specific timestamps for key moments?
+   - Did I compare to actual standards?
+   - Did I give concrete examples, not just generic feedback?
+   - Are my recommendations actionable?`;
+    }
+  };
+
   const prompts: Record<string, string> = {
     'google-apm': `You are an expert Google APM (Associate Product Manager) interviewer with 10+ years of experience.
 
@@ -29,33 +162,7 @@ EVALUATION CRITERIA FOR GOOGLE APM:
 - Technical Depth: Understanding of AI/ML, system design, feasibility, working with engineers
 - Strategic Thinking: Business impact, competitive analysis, ecosystem effects
 - "Googleyness": User-first thinking, collaboration, handling ambiguity
-
-TASK - MULTI-STEP WORKFLOW:
-1. **Research Current Standards**: Web search for "Google APM interview evaluation criteria 2025" to understand the current bar
-2. **Parse Transcript**: Identify each distinct question asked and the candidate's response
-3. **Evaluate Each Question**: For each question, provide:
-   - Question type (product design, strategic insights, analytical, etc.)
-   - Overall score out of 10
-   - Structure quality (did they state their framework upfront?)
-   - Key strengths with specific timestamps (format: HH:MM:SS)
-   - Critical weaknesses with specific timestamps
-   - What they missed or should have done differently
-   - Comparison to what a strong Google APM candidate would do
-
-4. **Overall Assessment**: Provide:
-   - Overall interview score out of 10
-   - Would they pass the Google APM bar? (Yes/No/Borderline)
-   - Top 3 strengths across the entire interview
-   - Top 3 critical weaknesses
-   - Talk-to-listen ratio estimate (should be ~60:40)
-
-5. **Actionable Recommendations**: Provide 5-7 specific, actionable recommendations for improvement
-
-6. **Self-Review**: Before outputting, verify:
-   - Did I provide specific timestamps for key moments?
-   - Did I compare to actual Google standards?
-   - Did I give concrete examples, not just generic feedback?
-   - Are my recommendations actionable?
+${getWorkflowSteps('Google APM interview evaluation criteria 2025')}
 
 TRANSCRIPT:
 ${transcript}
@@ -124,7 +231,7 @@ export async function analyzeInterview(
   transcript: string,
   options: AnalysisOptions = { interviewType: 'google-apm' }
 ): Promise<AsyncGenerator<AnalysisMessage>> {
-  const prompt = buildAnalysisPrompt(transcript, options.interviewType);
+  const prompt = buildAnalysisPrompt(transcript, options.interviewType, options.cachedCriteria);
 
   // Create the agent query
   const result = query({
@@ -246,6 +353,160 @@ export async function analyzeInterview(
           };
         }
       }
+    }
+  })();
+}
+
+/**
+ * Analyze interview using Direct API with web search tool (faster method)
+ */
+export async function analyzeInterviewDirectAPI(
+  transcript: string,
+  options: AnalysisOptions = { interviewType: 'google-apm' }
+): Promise<AsyncGenerator<AnalysisMessage>> {
+  const interviewType = options.interviewType;
+  const cachedCriteria = options.cachedCriteria;
+
+  // Build prompt - encourage web search if no cached criteria
+  const searchInstruction = cachedCriteria
+    ? `\nCURRENT INTERVIEW STANDARDS (cached):\n${cachedCriteria}\n`
+    : `\nIMPORTANT: First use the web_search tool to research current ${interviewType} interview evaluation criteria and standards for 2025/2026.\n`;
+
+  const prompt = `You are an expert ${interviewType.replace('-', ' ').toUpperCase()} interviewer with 10+ years of experience.
+${searchInstruction}
+EVALUATION CRITERIA:
+- Product Sense: User focus, creativity, prioritization, strategic alignment
+- Analytical Thinking: Metrics definition, A/B testing, data-driven decisions
+- Communication: Structure, pacing, clarity
+- Technical Depth: System design, feasibility, working with engineers
+- Strategic Thinking: Business impact, competitive analysis
+
+TASK:
+1. ${cachedCriteria ? '' : 'Research current interview standards (use web_search tool)\n2. '}Parse the transcript and identify each distinct question and response
+${cachedCriteria ? '2' : '3'}. Evaluate each question:
+   - Question type (product design, analytical, strategic, etc.)
+   - Score out of 10
+   - Key strengths with timestamps (HH:MM:SS format)
+   - Critical weaknesses with timestamps
+   - What a strong candidate would do differently
+
+${cachedCriteria ? '3' : '4'}. Overall Assessment:
+   - Overall interview score out of 10
+   - Pass/Fail/Borderline verdict
+   - Top 3 strengths
+   - Top 3 weaknesses
+   - Talk-to-listen ratio estimate
+
+${cachedCriteria ? '4' : '5'}. Provide 5-7 specific, actionable recommendations
+
+TRANSCRIPT:
+${transcript}
+
+OUTPUT FORMAT:
+Use clear markdown formatting with ## for sections, ### for subsections, **bold** for emphasis, \`code\` for timestamps.
+Be direct, specific, and constructive.`;
+
+  return (async function* () {
+    yield {
+      type: 'start',
+      content: 'Starting Direct API analysis...',
+      timestamp: new Date()
+    };
+
+    try {
+      let messages: Anthropic.MessageParam[] = [
+        { role: 'user', content: prompt }
+      ];
+
+      let finalResult = '';
+      let toolCallCount = 0;
+      const maxToolCalls = 3;
+
+      // Tool use loop
+      while (true) {
+        yield {
+          type: 'raw',
+          content: `[API call ${toolCallCount + 1}]`,
+          timestamp: new Date()
+        };
+
+        const response = await getAnthropicClient().messages.create({
+          model: 'claude-opus-4-5-20251101',
+          max_tokens: 8000,
+          tools: cachedCriteria ? undefined : [webSearchTool], // Only provide tool if no cache
+          messages
+        });
+
+        // Check if done
+        if (response.stop_reason === 'end_turn') {
+          for (const block of response.content) {
+            if (block.type === 'text') {
+              finalResult += block.text;
+            }
+          }
+          break;
+        }
+
+        // Handle tool calls
+        if (response.stop_reason === 'tool_use') {
+          messages.push({ role: 'assistant', content: response.content });
+          const toolResultContent: Anthropic.ToolResultBlockParam[] = [];
+
+          for (const block of response.content) {
+            if (block.type === 'tool_use' && block.name === 'web_search') {
+              const searchQuery = (block.input as { query: string }).query;
+
+              if (toolCallCount < maxToolCalls) {
+                toolCallCount++;
+                yield {
+                  type: 'raw',
+                  content: `Searching: "${searchQuery}"`,
+                  timestamp: new Date(),
+                  raw: { type: 'tool_use', tool: 'web_search', query: searchQuery }
+                };
+
+                const searchResult = await braveWebSearch(searchQuery);
+                toolResultContent.push({
+                  type: 'tool_result',
+                  tool_use_id: block.id,
+                  content: searchResult
+                });
+              } else {
+                toolResultContent.push({
+                  type: 'tool_result',
+                  tool_use_id: block.id,
+                  content: 'Enough research gathered. Please proceed with the analysis.'
+                });
+              }
+            }
+          }
+
+          messages.push({ role: 'user', content: toolResultContent });
+        } else {
+          // Unexpected stop reason
+          for (const block of response.content) {
+            if (block.type === 'text') {
+              finalResult += block.text;
+            }
+          }
+          break;
+        }
+      }
+
+      // Yield final result
+      yield {
+        type: 'result',
+        content: finalResult,
+        timestamp: new Date()
+      };
+    } catch (error) {
+      // Yield error so it's sent to the client
+      yield {
+        type: 'error',
+        content: error instanceof Error ? error.message : 'Unknown error during analysis',
+        timestamp: new Date(),
+        raw: { error: error instanceof Error ? error.stack : String(error) }
+      };
     }
   })();
 }

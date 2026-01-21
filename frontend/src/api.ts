@@ -119,8 +119,19 @@ export interface AdminRecord {
 }
 
 export async function isUserAdmin(userId: string): Promise<boolean> {
-  const docSnap = await getDoc(doc(db, 'admins', userId))
-  return docSnap.exists()
+  // Check UID-based admin (legacy)
+  const uidDocSnap = await getDoc(doc(db, 'admins', userId))
+  if (uidDocSnap.exists()) return true
+
+  // Check email-based admin (from config/admins)
+  const user = auth.currentUser
+  if (!user?.email) return false
+
+  const configDocSnap = await getDoc(doc(db, 'config', 'admins'))
+  if (!configDocSnap.exists()) return false
+
+  const emails: string[] = configDocSnap.data()?.emails || []
+  return emails.includes(user.email.toLowerCase())
 }
 
 export function subscribeToAdminData(
@@ -211,4 +222,80 @@ export async function getAnalysisByShareId(shareId: string): Promise<AnalysisDat
   const snapshot = await getDocs(q)
   if (snapshot.empty) return null
   return snapshot.docs[0].data() as AnalysisData
+}
+
+// =============================================================================
+// Interview Criteria Cache API
+// =============================================================================
+
+const CACHE_TTL_DAYS = 7
+
+export interface CachedCriteria {
+  interviewType: string
+  criteria: string
+  lastUpdated: string  // ISO date string
+  source: 'web-search' | 'manual'
+}
+
+/**
+ * Get cached interview criteria if available and fresh
+ */
+export async function getCachedCriteria(interviewType: string): Promise<string | null> {
+  try {
+    const docSnap = await getDoc(doc(db, 'interviewCriteria', interviewType))
+    if (!docSnap.exists()) return null
+
+    const data = docSnap.data() as CachedCriteria
+    const lastUpdated = new Date(data.lastUpdated)
+    const ageMs = Date.now() - lastUpdated.getTime()
+    const ttlMs = CACHE_TTL_DAYS * 24 * 60 * 60 * 1000
+
+    if (ageMs > ttlMs) {
+      console.log(`[CriteriaCache] Cache for ${interviewType} is stale`)
+      return null
+    }
+
+    console.log(`[CriteriaCache] Using cached criteria for ${interviewType}`)
+    return data.criteria
+  } catch (error) {
+    console.error('[CriteriaCache] Error fetching cached criteria:', error)
+    return null
+  }
+}
+
+/**
+ * Save criteria to cache (requires admin permissions)
+ */
+export async function saveCachedCriteria(
+  interviewType: string,
+  criteria: string,
+  source: 'web-search' | 'manual' = 'web-search'
+): Promise<void> {
+  const cacheData: CachedCriteria = {
+    interviewType,
+    criteria,
+    lastUpdated: new Date().toISOString(),
+    source
+  }
+
+  await setDoc(doc(db, 'interviewCriteria', interviewType), cacheData)
+  console.log(`[CriteriaCache] Saved cache for ${interviewType}`)
+}
+
+/**
+ * Get cache info for admin display
+ */
+export async function getCacheInfo(interviewType: string): Promise<{ lastUpdated: Date; source: string } | null> {
+  try {
+    const docSnap = await getDoc(doc(db, 'interviewCriteria', interviewType))
+    if (!docSnap.exists()) return null
+
+    const data = docSnap.data() as CachedCriteria
+    return {
+      lastUpdated: new Date(data.lastUpdated),
+      source: data.source
+    }
+  } catch {
+    return null
+  }
 }

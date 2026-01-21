@@ -8,7 +8,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "tsx src/test-analyzer.ts"
+    "test": "tsx src/test-analyzer.ts",
+    "compare": "tsx src/compare-methods.ts"
   },
   "keywords": [
     "interview",
@@ -19,11 +20,12 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.37",
-    "@anthropic-ai/sdk": "^0.68.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.5",
+    "@anthropic-ai/sdk": "^0.71.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.18.2",
+    "firebase-admin": "^13.6.0",
     "multer": "^1.4.5-lts.1"
   },
   "devDependencies": {
