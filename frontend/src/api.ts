@@ -16,8 +16,6 @@ import {
 import {
   onAuthStateChanged,
   signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   signOut as firebaseSignOut,
   GoogleAuthProvider,
   type User,
@@ -41,16 +39,6 @@ export function subscribeToAuthState(callback: (user: User | null) => void): Uns
 export async function signInWithGoogle(): Promise<User> {
   googleProvider.setCustomParameters({ prompt: 'select_account' })
   const result = await signInWithPopup(auth, googleProvider)
-  return result.user
-}
-
-export async function signInWithEmail(email: string, password: string): Promise<User> {
-  const result = await signInWithEmailAndPassword(auth, email, password)
-  return result.user
-}
-
-export async function signUpWithEmail(email: string, password: string): Promise<User> {
-  const result = await createUserWithEmailAndPassword(auth, email, password)
   return result.user
 }
 

@@ -1079,37 +1079,18 @@ body {
 
 .welcome-tips {
   display: flex;
-  justify-content: flex-start;
-  gap: 1.5rem;
   flex-wrap: wrap;
-}
-
-.tip {
-  display: flex;
+  gap: 0.5rem;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0;
-  background: transparent;
-  border: none;
-  transition: opacity 0.2s;
-}
-
-.tip:hover {
-  opacity: 0.8;
-}
-
-.tip-icon {
-  width: 16px;
-  height: 16px;
-  color: var(--primary-500);
-  flex-shrink: 0;
 }
 
 .tip-text {
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   color: var(--text-secondary);
-  font-weight: 500;
-  white-space: nowrap;
+}
+
+.tip-separator {
+  color: #ccc;
 }
 
 @media (max-width: 768px) {
@@ -1169,12 +1150,6 @@ body {
   }
 
   .welcome-tips {
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .tip {
-    width: 100%;
     justify-content: center;
   }
 }

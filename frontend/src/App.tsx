@@ -818,31 +818,11 @@ function MainContent() {
                   Take a deep breath. You've got this!
                 </p>
                 <p className="welcome-subtitle">
-                  Upload your interview transcript above for thoughtful, constructive feedback.
-                  Fast analysis takes ~45 seconds, Deep takes ~2 minutes.
+                  Get thoughtful, constructive feedback on your PM interview practice.
                 </p>
-                <div className="welcome-tips">
-                  <div className="tip">
-                    <svg className="tip-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M14 5L6 13L2 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                    <span className="tip-text">Upload text transcript</span>
-                  </div>
-                  <div className="tip">
-                    <svg className="tip-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5"/>
-                      <circle cx="8" cy="8" r="2" fill="currentColor"/>
-                    </svg>
-                    <span className="tip-text">Company-specific insights</span>
-                  </div>
-                  <div className="tip">
-                    <svg className="tip-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M8 2V10M8 10L5 7M8 10L11 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                      <path d="M2 14H14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                    </svg>
-                    <span className="tip-text">Actionable feedback</span>
-                  </div>
-                </div>
+                <p className="welcome-subtitle">
+                  Upload your transcript above. Analysis takes about 1 to 2 minutes.
+                </p>
               </div>
             </div>
           </div>
