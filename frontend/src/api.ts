@@ -104,6 +104,9 @@ export interface AdminRecord {
   email: string
   gmailTokens?: unknown
   gmailAuthorizedAt?: string
+  gmailTokenRefreshedAt?: string
+  gmailTokenError?: string
+  gmailTokenErrorAt?: string
 }
 
 export async function isUserAdmin(userId: string): Promise<boolean> {
@@ -350,4 +353,63 @@ export async function getCacheInfo(interviewType: string): Promise<{ lastUpdated
   } catch {
     return null
   }
+}
+
+// =============================================================================
+// Logs API
+// =============================================================================
+
+export interface LogEntry {
+  timestamp: string
+  severity: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'DEFAULT'
+  functionName: string
+  message: string
+  executionId?: string
+}
+
+export interface FetchLogsParams {
+  limit?: number
+  severity?: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR'
+  hoursAgo?: number
+}
+
+export interface FetchLogsResponse {
+  logs: LogEntry[]
+  count: number
+  filter: {
+    severity?: string
+    hoursAgo: number
+    limit: number
+  }
+}
+
+const FUNCTIONS_BASE_URL = 'https://us-central1-interview-analyzer-prod.cloudfunctions.net'
+
+export async function fetchLogs(params: FetchLogsParams = {}): Promise<FetchLogsResponse> {
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('Not authenticated')
+  }
+
+  const idToken = await user.getIdToken()
+
+  const queryParams = new URLSearchParams()
+  if (params.limit) queryParams.set('limit', params.limit.toString())
+  if (params.severity) queryParams.set('severity', params.severity)
+  if (params.hoursAgo) queryParams.set('hoursAgo', params.hoursAgo.toString())
+
+  const url = `${FUNCTIONS_BASE_URL}/fetchLogs?${queryParams.toString()}`
+
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': `Bearer ${idToken}`,
+    },
+  })
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+    throw new Error(errorData.error || `HTTP ${response.status}`)
+  }
+
+  return response.json()
 }

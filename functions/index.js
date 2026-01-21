@@ -1,10 +1,15 @@
 const {onDocumentCreated} = require("firebase-functions/v2/firestore");
 const {onRequest} = require("firebase-functions/v2/https");
+const {onSchedule} = require("firebase-functions/v2/scheduler");
 const admin = require("firebase-admin");
 const {setGlobalOptions} = require("firebase-functions/v2");
 const {google} = require("googleapis");
+const {Logging} = require("@google-cloud/logging");
 
 admin.initializeApp();
+
+// Initialize Cloud Logging client
+const logging = new Logging();
 
 // Set global options
 setGlobalOptions({region: "us-central1"});
@@ -447,6 +452,53 @@ Error: ${error.message}
 });
 
 /**
+ * Scheduled function to refresh Gmail tokens weekly
+ * Keeps tokens active to prevent expiration
+ */
+exports.refreshGmailTokens = onSchedule("every monday 09:00", async () => {
+  console.log("Starting scheduled Gmail token refresh...");
+
+  const adminsSnapshot = await admin.firestore().collection("admins").get();
+
+  for (const doc of adminsSnapshot.docs) {
+    const adminData = doc.data();
+    if (!adminData.gmailTokens) continue;
+
+    try {
+      const oauth2Client = new google.auth.OAuth2(
+          OAUTH_CLIENT_ID,
+          OAUTH_CLIENT_SECRET,
+          OAUTH_REDIRECT_URI,
+      );
+
+      oauth2Client.setCredentials(adminData.gmailTokens);
+
+      // Force a token refresh
+      const {credentials} = await oauth2Client.refreshAccessToken();
+
+      // Update stored tokens with new ones
+      await doc.ref.update({
+        gmailTokens: credentials,
+        gmailTokenRefreshedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      console.log(`✅ Refreshed Gmail token for admin ${doc.id}`);
+    } catch (error) {
+      console.error(`❌ Failed to refresh token for admin ${doc.id}:`, error.message);
+
+      // Mark token as potentially invalid
+      await doc.ref.update({
+        gmailTokenError: error.message,
+        gmailTokenErrorAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+  }
+
+  console.log("Gmail token refresh complete.");
+  return null;
+});
+
+/**
  * Generate a simple token for approval link
  */
 function generateToken(userId) {
@@ -504,3 +556,92 @@ async function checkAndAutoApprove(userId, userEmail) {
 
   return false;
 }
+
+/**
+ * Fetches recent logs for admin viewing
+ * Requires admin authentication
+ */
+exports.fetchLogs = onRequest({cors: true}, async (req, res) => {
+  try {
+    // Verify admin authentication via Firebase ID token
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      res.status(401).json({error: "Unauthorized: Missing token"});
+      return;
+    }
+
+    const idToken = authHeader.split("Bearer ")[1];
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const uid = decodedToken.uid;
+
+    // Check if user is admin
+    const adminDoc = await admin.firestore().collection("admins").doc(uid).get();
+    if (!adminDoc.exists) {
+      // Also check config/admins for email-based admin
+      const configDoc = await admin.firestore().collection("config").doc("admins").get();
+      const emails = configDoc.exists ? (configDoc.data()?.emails || []) : [];
+      if (!emails.includes(decodedToken.email?.toLowerCase())) {
+        res.status(403).json({error: "Forbidden: Not an admin"});
+        return;
+      }
+    }
+
+    // Parse query parameters
+    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    const severity = req.query.severity; // DEBUG, INFO, WARNING, ERROR
+    const hoursAgo = parseInt(req.query.hoursAgo) || 24;
+
+    // Build log filter - include both Cloud Functions and Cloud Run (Functions v2 uses Cloud Run)
+    const startTime = new Date(Date.now() - hoursAgo * 60 * 60 * 1000);
+
+    let filter = `(resource.type="cloud_function" OR resource.type="cloud_run_revision") AND timestamp >= "${startTime.toISOString()}"`;
+    if (severity) {
+      filter += ` AND severity="${severity.toUpperCase()}"`;
+    }
+
+    // Query logs
+    const [entries] = await logging.getEntries({
+      filter,
+      orderBy: "timestamp desc",
+      pageSize: limit,
+    });
+
+    // Format log entries for frontend
+    const logs = entries.map((entry) => {
+      const data = entry.data;
+      let message = "";
+
+      if (typeof data === "string") {
+        message = data;
+      } else if (data?.message) {
+        message = data.message;
+      } else if (data?.textPayload) {
+        message = data.textPayload;
+      } else if (data) {
+        message = JSON.stringify(data);
+      }
+
+      // Get function name from either Cloud Function or Cloud Run resource labels
+      const functionName = entry.metadata.resource?.labels?.function_name ||
+                          entry.metadata.resource?.labels?.service_name ||
+                          "unknown";
+
+      return {
+        timestamp: entry.metadata.timestamp,
+        severity: entry.metadata.severity || "DEFAULT",
+        functionName,
+        message: message.substring(0, 2000), // Truncate very long messages
+        executionId: entry.metadata.labels?.execution_id,
+      };
+    });
+
+    res.json({
+      logs,
+      count: logs.length,
+      filter: {severity, hoursAgo, limit},
+    });
+  } catch (error) {
+    console.error("Error fetching logs:", error);
+    res.status(500).json({error: error.message});
+  }
+});
