@@ -65,8 +65,11 @@
 /* Main Content Area */
 .admin-main {
   flex: 1;
-  padding: 2rem;
+  padding: 1rem;
   max-width: 900px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Section Styles */
@@ -117,11 +120,23 @@
 
 .section-body-logs {
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .section-body-logs .log-viewer {
   border: none;
   box-shadow: none;
+}
+
+/* Make admin-section flex for logs */
+.admin-section:has(.section-body-logs) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Legacy Admin Container (deprecated) */
@@ -815,7 +830,12 @@
 
 /* LogViewer Component */
 .log-viewer {
-  padding: 1.5rem;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .log-viewer-header {
@@ -889,6 +909,7 @@
   margin-bottom: 1rem;
   padding-bottom: 1rem;
   border-bottom: 1px solid #e1e4e8;
+  flex-shrink: 0;
 }
 
 .log-filter-group {
@@ -967,6 +988,7 @@
   color: #dc2626;
   font-size: 0.85rem;
   margin-bottom: 1rem;
+  flex-shrink: 0;
 }
 
 /* Log Loading/Empty States */
@@ -1001,7 +1023,8 @@
 
 /* Log Table Styles */
 .log-table-wrapper {
-  max-height: 500px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   border: 1px solid #e1e4e8;
   border-radius: 6px;
@@ -1137,6 +1160,7 @@
   .admin-main {
     padding: 1rem;
     max-width: 100%;
+    overflow: auto;
   }
 
   .section-header,
@@ -1220,7 +1244,8 @@
   }
 
   .log-table-wrapper {
-    max-height: 400px;
+    flex: 1;
+    min-height: 200px;
   }
 
   .log-table {

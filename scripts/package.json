@@ -1,0 +1,17 @@
+{
+  "name": "interview-analyzer-scripts",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "add-admin": "npx tsx manage-admins.ts add",
+    "remove-admin": "npx tsx manage-admins.ts remove",
+    "list-admins": "npx tsx manage-admins.ts list"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

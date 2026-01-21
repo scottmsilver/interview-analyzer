@@ -1,0 +1,25 @@
+app = "interview-analyzer-web"
+primary_region = "sjc"
+
+[build]
+  [build.args]
+    VITE_API_URL = "https://interview-analyzer-api.fly.dev"
+    VITE_FIREBASE_API_KEY = "AIzaSyAHHPgFOJx6ynDZX7vwJthsLhNCF97xu30"
+    VITE_FIREBASE_AUTH_DOMAIN = "interview-analyzer-prod.firebaseapp.com"
+    VITE_FIREBASE_PROJECT_ID = "interview-analyzer-prod"
+    VITE_FIREBASE_STORAGE_BUCKET = "interview-analyzer-prod.firebasestorage.app"
+    VITE_FIREBASE_MESSAGING_SENDER_ID = "542771533591"
+    VITE_FIREBASE_APP_ID = "1:542771533591:web:c0f8915d611340df3c8952"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1
