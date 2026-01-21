@@ -17,8 +17,8 @@ function getAnthropicClient(): Anthropic {
 export type AnalysisMethod = 'agent-sdk' | 'direct-api';
 
 export interface AnalysisOptions {
-  interviewType: 'google-apm' | 'meta-pm' | 'amazon-pm' | 'generic';
-  cachedCriteria?: string;  // Pre-fetched interview criteria to skip web search
+  interviewType: string;  // Can be built-in types or custom admin-defined types
+  cachedCriteria?: string;  // Pre-fetched interview criteria (from admin or web search)
   method?: AnalysisMethod;  // Which analysis method to use (default: agent-sdk)
 }
 

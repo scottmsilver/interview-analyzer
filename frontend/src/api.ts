@@ -293,27 +293,38 @@ export interface CachedCriteria {
 }
 
 /**
- * Get cached interview criteria if available and fresh
+ * Get interview criteria - first checks admin-defined types, then cached web search results
  */
 export async function getCachedCriteria(interviewType: string): Promise<string | null> {
   try {
-    const docSnap = await getDoc(doc(db, 'interviewCriteria', interviewType))
-    if (!docSnap.exists()) return null
+    // First check admin-defined interview types (no TTL - always fresh)
+    const typeDocSnap = await getDoc(doc(db, 'interviewTypes', interviewType))
+    if (typeDocSnap.exists()) {
+      const typeData = typeDocSnap.data() as InterviewTypeRecord
+      if (typeData.criteria) {
+        console.log(`[Criteria] Using admin-defined criteria for ${interviewType}`)
+        return typeData.criteria
+      }
+    }
 
-    const data = docSnap.data() as CachedCriteria
+    // Fall back to cached web search criteria (with TTL)
+    const cacheDocSnap = await getDoc(doc(db, 'interviewCriteria', interviewType))
+    if (!cacheDocSnap.exists()) return null
+
+    const data = cacheDocSnap.data() as CachedCriteria
     const lastUpdated = new Date(data.lastUpdated)
     const ageMs = Date.now() - lastUpdated.getTime()
     const ttlMs = CACHE_TTL_DAYS * 24 * 60 * 60 * 1000
 
     if (ageMs > ttlMs) {
-      console.log(`[CriteriaCache] Cache for ${interviewType} is stale`)
+      console.log(`[Criteria] Cache for ${interviewType} is stale`)
       return null
     }
 
-    console.log(`[CriteriaCache] Using cached criteria for ${interviewType}`)
+    console.log(`[Criteria] Using cached criteria for ${interviewType}`)
     return data.criteria
   } catch (error) {
-    console.error('[CriteriaCache] Error fetching cached criteria:', error)
+    console.error('[Criteria] Error fetching criteria:', error)
     return null
   }
 }
@@ -412,4 +423,68 @@ export async function fetchLogs(params: FetchLogsParams = {}): Promise<FetchLogs
   }
 
   return response.json()
+}
+
+// =============================================================================
+// Interview Types API
+// =============================================================================
+
+export interface InterviewTypeRecord {
+  id: string
+  name: string
+  criteria: string
+  createdAt: string
+  updatedAt: string
+  isBuiltIn?: boolean
+}
+
+export async function getInterviewTypes(): Promise<InterviewTypeRecord[]> {
+  const snapshot = await getDocs(collection(db, 'interviewTypes'))
+  const types: InterviewTypeRecord[] = []
+  snapshot.forEach((doc) => {
+    types.push({ id: doc.id, ...doc.data() } as InterviewTypeRecord)
+  })
+  return types.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export function subscribeToInterviewTypes(
+  callback: (types: InterviewTypeRecord[]) => void
+): Unsubscribe {
+  return onSnapshot(collection(db, 'interviewTypes'), (snapshot) => {
+    const types: InterviewTypeRecord[] = []
+    snapshot.forEach((doc) => {
+      types.push({ id: doc.id, ...doc.data() } as InterviewTypeRecord)
+    })
+    callback(types.sort((a, b) => a.name.localeCompare(b.name)))
+  })
+}
+
+export async function createInterviewType(
+  id: string,
+  name: string,
+  criteria: string
+): Promise<void> {
+  const now = new Date().toISOString()
+  await setDoc(doc(db, 'interviewTypes', id), {
+    name,
+    criteria,
+    createdAt: now,
+    updatedAt: now,
+  })
+}
+
+export async function updateInterviewType(
+  id: string,
+  name: string,
+  criteria: string
+): Promise<void> {
+  await updateDoc(doc(db, 'interviewTypes', id), {
+    name,
+    criteria,
+    updatedAt: new Date().toISOString(),
+  })
+}
+
+export async function deleteInterviewType(id: string): Promise<void> {
+  await deleteDoc(doc(db, 'interviewTypes', id))
 }

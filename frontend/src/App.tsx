@@ -12,7 +12,7 @@ import { Layout } from './Layout'
 import { Toast, AnalysisMarkdown } from './components'
 import { CopyIcon } from './icons'
 import { useToast, useCopyToClipboard } from './hooks'
-import { INTERVIEW_TYPES, generateShareId, formatDateTime } from './types'
+import { generateShareId, formatDateTime } from './types'
 import {
   subscribeToAuthState,
   isUserAdmin,
@@ -21,8 +21,10 @@ import {
   subscribeToUserApproval,
   createAnalysis,
   getCachedCriteria,
+  getInterviewTypes,
   type User,
   type UserRecord,
+  type InterviewTypeRecord,
 } from './api'
 
 // Auth context type for child routes
@@ -376,7 +378,8 @@ function MainContent() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const [file, setFile] = useState<File | null>(null)
-  const [interviewType, setInterviewType] = useState<string>('google-apm')
+  const [interviewType, setInterviewType] = useState<string>('')
+  const [interviewTypes, setInterviewTypes] = useState<InterviewTypeRecord[]>([])
   const [analysisMethod, setAnalysisMethod] = useState<'direct-api' | 'agent-sdk'>('direct-api')
   const [analyzing, setAnalyzing] = useState(false)
   const [analysis, setAnalysis] = useState('')
@@ -406,6 +409,19 @@ function MainContent() {
   // In production, you need to deploy your backend somewhere (e.g., Heroku, Railway, Render)
   // and update this URL accordingly
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:9002'
+
+  // Fetch interview types on mount
+  useEffect(() => {
+    getInterviewTypes().then((types) => {
+      setInterviewTypes(types)
+      // Set default to first type if not already set
+      if (types.length > 0 && !interviewType) {
+        setInterviewType(types[0].id)
+      }
+    }).catch((err) => {
+      console.error('Failed to fetch interview types:', err)
+    })
+  }, [])
 
   // Show warning in console if API URL might be misconfigured
   useEffect(() => {
@@ -722,7 +738,7 @@ function MainContent() {
                 disabled={analyzing}
                 className="select-compact"
               >
-                {INTERVIEW_TYPES.map(type => (
+                {interviewTypes.map(type => (
                   <option key={type.id} value={type.id}>
                     {type.name}
                   </option>

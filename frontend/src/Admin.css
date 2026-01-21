@@ -618,6 +618,107 @@
   cursor: not-allowed;
 }
 
+/* Job Types Section */
+.jobtype-form {
+  max-width: 600px;
+}
+
+.jobtype-form h3 {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #111;
+}
+
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-group label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 0.25rem;
+}
+
+.form-hint {
+  display: block;
+  font-size: 0.75rem;
+  color: #888;
+  margin-top: 0.25rem;
+}
+
+.criteria-textarea {
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  border: 1px solid #e1e4e8;
+  border-radius: 6px;
+  resize: vertical;
+  min-height: 200px;
+}
+
+.criteria-textarea:focus {
+  outline: none;
+  border-color: var(--primary-400);
+}
+
+.form-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.jobtype-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.jobtype-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 1rem;
+  border: 1px solid #e1e4e8;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.jobtype-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.jobtype-name {
+  font-weight: 600;
+  color: #111;
+  margin-bottom: 0.25rem;
+}
+
+.jobtype-id {
+  font-size: 0.75rem;
+  color: #888;
+  font-family: monospace;
+  margin-bottom: 0.5rem;
+}
+
+.jobtype-criteria-preview {
+  font-size: 0.85rem;
+  color: #555;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.jobtype-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: 1rem;
+  flex-shrink: 0;
+}
+
 /* Users Section */
 .users-section {
   background: white;

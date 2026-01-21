@@ -7,9 +7,14 @@ import {
   createInvite,
   revokeInvite,
   subscribeToInvites,
+  subscribeToInterviewTypes,
+  createInterviewType,
+  updateInterviewType,
+  deleteInterviewType,
   type UserRecord,
   type InviteRecord,
   type AdminRecord,
+  type InterviewTypeRecord,
 } from './api'
 import { Loading, LogViewer } from './components'
 import { useAuth } from './App'
@@ -39,7 +44,7 @@ interface ConfirmDialog {
   onConfirm: () => void
 }
 
-type AdminSection = 'gmail' | 'invites' | 'users' | 'logs'
+type AdminSection = 'gmail' | 'invites' | 'users' | 'jobtypes' | 'logs'
 
 export function Admin() {
   const { user } = useAuth()
@@ -57,6 +62,16 @@ export function Admin() {
   const [inviteError, setInviteError] = useState('')
   const [inviteSuccess, setInviteSuccess] = useState('')
   const [revokingInvite, setRevokingInvite] = useState<string | null>(null)
+
+  // Interview types state
+  const [interviewTypes, setInterviewTypes] = useState<InterviewTypeRecord[]>([])
+  const [editingType, setEditingType] = useState<InterviewTypeRecord | null>(null)
+  const [newTypeName, setNewTypeName] = useState('')
+  const [newTypeId, setNewTypeId] = useState('')
+  const [newTypeCriteria, setNewTypeCriteria] = useState('')
+  const [savingType, setSavingType] = useState(false)
+  const [typeError, setTypeError] = useState('')
+  const [showTypeForm, setShowTypeForm] = useState(false)
 
   // Error/notification state
   const [notification, setNotification] = useState<{ type: 'error' | 'success', title: string, message: string } | null>(null)
@@ -208,6 +223,14 @@ export function Admin() {
     return () => unsubscribe()
   }, [])
 
+  // Subscribe to interview types
+  useEffect(() => {
+    const unsubscribe = subscribeToInterviewTypes((types) => {
+      setInterviewTypes(types)
+    })
+    return () => unsubscribe()
+  }, [])
+
   const handleApproveUser = async (userId: string) => {
     setApproving(userId)
     try {
@@ -251,6 +274,73 @@ export function Admin() {
     } finally {
       setRevokingInvite(null)
     }
+  }
+
+  // Interview type handlers
+  const generateSlug = (name: string) => {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+  }
+
+  const handleSaveType = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const name = editingType ? editingType.name : newTypeName.trim()
+    const id = editingType ? editingType.id : newTypeId.trim() || generateSlug(newTypeName)
+    const criteria = editingType ? editingType.criteria : newTypeCriteria.trim()
+
+    if (!name || !criteria) {
+      setTypeError('Name and criteria are required')
+      return
+    }
+
+    setSavingType(true)
+    setTypeError('')
+
+    try {
+      if (editingType) {
+        await updateInterviewType(id, name, criteria)
+      } else {
+        await createInterviewType(id, name, criteria)
+      }
+      // Reset form
+      setNewTypeName('')
+      setNewTypeId('')
+      setNewTypeCriteria('')
+      setEditingType(null)
+      setShowTypeForm(false)
+    } catch (error) {
+      setTypeError(getErrorMessage(error))
+    } finally {
+      setSavingType(false)
+    }
+  }
+
+  const handleEditType = (type: InterviewTypeRecord) => {
+    setEditingType(type)
+    setShowTypeForm(true)
+    setTypeError('')
+  }
+
+  const handleDeleteType = async (id: string) => {
+    const confirmed = await showConfirm(
+      'Delete Job Type?',
+      'This will permanently delete this job type. Existing analyses using this type will not be affected.'
+    )
+    if (!confirmed) return
+
+    try {
+      await deleteInterviewType(id)
+    } catch (error) {
+      showError('Failed to delete job type', getErrorMessage(error))
+    }
+  }
+
+  const handleCancelTypeEdit = () => {
+    setEditingType(null)
+    setShowTypeForm(false)
+    setNewTypeName('')
+    setNewTypeId('')
+    setNewTypeCriteria('')
+    setTypeError('')
   }
 
   const authorizeGmail = () => {
@@ -325,6 +415,7 @@ export function Admin() {
     { id: 'gmail', label: 'Gmail Integration' },
     { id: 'invites', label: 'Invitations', badge: invites.length || undefined },
     { id: 'users', label: 'Users', badge: pendingUsersCount || undefined },
+    { id: 'jobtypes', label: 'Job Types', badge: interviewTypes.length || undefined },
     { id: 'logs', label: 'Logs' },
   ]
 
@@ -574,6 +665,139 @@ export function Admin() {
                       >
                         {'>>'}
                       </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Job Types Section */}
+        {activeSection === 'jobtypes' && (
+          <div className="admin-section">
+            <div className="section-body">
+              {/* Add/Edit Form */}
+              {showTypeForm ? (
+                <form onSubmit={handleSaveType} className="jobtype-form">
+                  <h3>{editingType ? 'Edit Job Type' : 'Add New Job Type'}</h3>
+
+                  {typeError && <div className="invite-error">{typeError}</div>}
+
+                  <div className="form-group">
+                    <label>Name</label>
+                    <input
+                      type="text"
+                      value={editingType ? editingType.name : newTypeName}
+                      onChange={(e) => {
+                        if (editingType) {
+                          setEditingType({ ...editingType, name: e.target.value })
+                        } else {
+                          setNewTypeName(e.target.value)
+                          if (!newTypeId) {
+                            setNewTypeId(generateSlug(e.target.value))
+                          }
+                        }
+                      }}
+                      placeholder="e.g., Google APM"
+                      className="invite-input"
+                      disabled={savingType}
+                    />
+                  </div>
+
+                  {!editingType && (
+                    <div className="form-group">
+                      <label>ID (slug)</label>
+                      <input
+                        type="text"
+                        value={newTypeId}
+                        onChange={(e) => setNewTypeId(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                        placeholder="e.g., google-apm"
+                        className="invite-input"
+                        disabled={savingType}
+                      />
+                      <span className="form-hint">Used internally. Auto-generated from name if left empty.</span>
+                    </div>
+                  )}
+
+                  <div className="form-group">
+                    <label>Evaluation Criteria</label>
+                    <textarea
+                      value={editingType ? editingType.criteria : newTypeCriteria}
+                      onChange={(e) => {
+                        if (editingType) {
+                          setEditingType({ ...editingType, criteria: e.target.value })
+                        } else {
+                          setNewTypeCriteria(e.target.value)
+                        }
+                      }}
+                      placeholder="Enter the evaluation criteria for this interview type..."
+                      className="criteria-textarea"
+                      rows={10}
+                      disabled={savingType}
+                    />
+                  </div>
+
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      onClick={handleCancelTypeEdit}
+                      className="disconnect-button"
+                      disabled={savingType}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="invite-button"
+                      disabled={savingType}
+                    >
+                      {savingType ? 'Saving...' : (editingType ? 'Update' : 'Create')}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setShowTypeForm(true)}
+                    className="invite-button"
+                    style={{ marginBottom: '1rem' }}
+                  >
+                    + Add Job Type
+                  </button>
+
+                  {interviewTypes.length === 0 ? (
+                    <div className="empty-state">
+                      <p>No job types defined. Add one to get started.</p>
+                    </div>
+                  ) : (
+                    <div className="jobtype-list">
+                      {interviewTypes.map((type) => (
+                        <div key={type.id} className="jobtype-item">
+                          <div className="jobtype-info">
+                            <div className="jobtype-name">{type.name}</div>
+                            <div className="jobtype-id">{type.id}</div>
+                            <div className="jobtype-criteria-preview">
+                              {type.criteria.substring(0, 150)}
+                              {type.criteria.length > 150 ? '...' : ''}
+                            </div>
+                          </div>
+                          <div className="jobtype-actions">
+                            <button
+                              onClick={() => handleEditType(type)}
+                              className="disconnect-button"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleDeleteType(type.id)}
+                              className="revoke-button"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </>

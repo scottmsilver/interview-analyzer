@@ -45,6 +45,14 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Interview types - admin-defined job types
+    match /interviewTypes/{typeId} {
+      // Anyone authenticated can read interview types (for dropdown)
+      allow read: if request.auth != null;
+      // Only admins can create/update/delete
+      allow write: if isAdmin();
+    }
+
     // Users collection - stores approval status
     match /users/{userId} {
       // Users can read their own document, admins can read all
