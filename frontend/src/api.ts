@@ -213,6 +213,70 @@ export async function getAnalysisByShareId(shareId: string): Promise<AnalysisDat
 }
 
 // =============================================================================
+// Invites API
+// =============================================================================
+
+export interface InviteRecord {
+  email: string
+  invitedBy: string
+  createdAt: string
+  expiresAt: string
+  status: 'pending' | 'accepted' | 'revoked' | 'expired'
+  token: string
+  acceptedAt?: string
+  emailSent?: boolean
+  emailError?: string
+  emailSentAt?: string
+}
+
+export async function createInvite(email: string, invitedBy: string): Promise<string> {
+  const token = crypto.randomUUID()
+  const createdAt = new Date()
+  const expiresAt = new Date(createdAt.getTime() + 7 * 24 * 60 * 60 * 1000) // 7 days
+
+  const docRef = await addDoc(collection(db, 'invites'), {
+    email: email.toLowerCase(),
+    invitedBy,
+    createdAt: createdAt.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+    status: 'pending',
+    token,
+  })
+  return docRef.id
+}
+
+export async function revokeInvite(inviteId: string): Promise<void> {
+  await updateDoc(doc(db, 'invites', inviteId), {
+    status: 'revoked',
+  })
+}
+
+export function subscribeToInvites(
+  callback: (invites: (InviteRecord & { id: string })[]) => void,
+  onError?: (error: Error) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, 'invites'),
+    where('status', '==', 'pending'),
+    orderBy('createdAt', 'desc')
+  )
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const invites: (InviteRecord & { id: string })[] = []
+      snapshot.forEach((doc) => {
+        invites.push({ id: doc.id, ...doc.data() } as InviteRecord & { id: string })
+      })
+      callback(invites)
+    },
+    (error) => {
+      console.error('Error subscribing to invites:', error)
+      if (onError) onError(error)
+    }
+  )
+}
+
+// =============================================================================
 // Interview Criteria Cache API
 // =============================================================================
 

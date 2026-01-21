@@ -31,8 +31,10 @@ service cloud.firestore {
       // Users can read their own admin document (to check if they're admin)
       // Admins can read all admin documents
       allow read: if request.auth != null && (request.auth.uid == adminId || isAdmin());
-      // Nobody can write (must be done via Firebase Console or Admin SDK)
-      allow write: if false;
+      // Admins can update their own document (for Gmail token management)
+      allow update: if request.auth != null && request.auth.uid == adminId && isAdmin();
+      // Create/delete still requires Admin SDK
+      allow create, delete: if false;
     }
 
     // Interview criteria cache - for caching web search results
@@ -58,6 +60,23 @@ service cloud.firestore {
       // Prevent regular users from updating their own
       allow update: if isAdmin();
 
+      allow delete: if isAdmin();
+    }
+
+    // Invites collection - stores user invitations
+    match /invites/{inviteId} {
+      // Admins can read all invites
+      allow read: if isAdmin();
+
+      // Admins can create invites
+      allow create: if isAdmin()
+                    && request.resource.data.invitedBy == request.auth.uid
+                    && request.resource.data.status == 'pending';
+
+      // Admins can update invites (revoke, etc.)
+      allow update: if isAdmin();
+
+      // Admins can delete invites
       allow delete: if isAdmin();
     }
 

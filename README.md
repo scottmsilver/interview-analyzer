@@ -182,10 +182,10 @@ npm run build
 
 ### Deployment
 
-**Frontend (Firebase Hosting)**
+**Frontend (Fly.io)**
 ```bash
 cd frontend
-firebase deploy --only hosting
+fly deploy
 ```
 
 **Backend (Cloud Run)**
@@ -195,6 +195,17 @@ gcloud run deploy interview-analyzer-api \
   --source . \
   --region us-central1 \
   --allow-unauthenticated
+```
+
+**Firebase (Firestore rules, indexes, and Cloud Functions)**
+```bash
+# Deploy everything
+firebase deploy --only firestore:rules,firestore:indexes,functions
+
+# Or deploy individually
+firebase deploy --only firestore:rules
+firebase deploy --only firestore:indexes
+firebase deploy --only functions
 ```
 
 ## Contributing

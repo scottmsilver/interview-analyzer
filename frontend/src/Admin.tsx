@@ -4,7 +4,11 @@ import {
   subscribeToAdminData,
   approveUser as apiApproveUser,
   updateAdminGmail,
+  createInvite,
+  revokeInvite,
+  subscribeToInvites,
   type UserRecord,
+  type InviteRecord,
 } from './api'
 import { Loading } from './components'
 import { useAuth } from './App'
@@ -24,6 +28,8 @@ type PendingUser = UserRecord & { id: string }
 
 const columnHelper = createColumnHelper<PendingUser>()
 
+type PendingInvite = InviteRecord & { id: string }
+
 export function Admin() {
   const { user } = useAuth()
   const [users, setUsers] = useState<PendingUser[]>([])
@@ -31,6 +37,14 @@ export function Admin() {
   const [approving, setApproving] = useState<string | null>(null)
   const [gmailAuthorized, setGmailAuthorized] = useState(false)
   const [sorting, setSorting] = useState<SortingState>([])
+
+  // Invite state
+  const [invites, setInvites] = useState<PendingInvite[]>([])
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [sendingInvite, setSendingInvite] = useState(false)
+  const [inviteError, setInviteError] = useState('')
+  const [inviteSuccess, setInviteSuccess] = useState('')
+  const [revokingInvite, setRevokingInvite] = useState<string | null>(null)
 
   // Define columns
   const columns = useMemo(
@@ -130,6 +144,25 @@ export function Admin() {
     return () => unsubscribe()
   }, [user.uid])
 
+  useEffect(() => {
+    // Listen for real-time updates to invites
+    const unsubscribe = subscribeToInvites(
+      (invitesList) => {
+        // Filter out expired invites on the client side
+        const now = new Date()
+        const validInvites = invitesList.filter(
+          (invite) => new Date(invite.expiresAt) > now
+        )
+        setInvites(validInvites)
+      },
+      (error) => {
+        setInviteError('Failed to load invites: ' + getErrorMessage(error))
+      }
+    )
+
+    return () => unsubscribe()
+  }, [])
+
   const handleApproveUser = async (userId: string) => {
     setApproving(userId)
     try {
@@ -139,6 +172,39 @@ export function Admin() {
       alert('Error approving user: ' + getErrorMessage(error))
     } finally {
       setApproving(null)
+    }
+  }
+
+  const handleSendInvite = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!inviteEmail.trim()) return
+
+    setInviteError('')
+    setInviteSuccess('')
+    setSendingInvite(true)
+
+    try {
+      await createInvite(inviteEmail.trim(), user.uid)
+      setInviteSuccess(`Invite sent to ${inviteEmail}`)
+      setInviteEmail('')
+      setTimeout(() => setInviteSuccess(''), 5000)
+    } catch (error) {
+      console.error('Error sending invite:', error)
+      setInviteError('Failed to send invite: ' + getErrorMessage(error))
+    } finally {
+      setSendingInvite(false)
+    }
+  }
+
+  const handleRevokeInvite = async (inviteId: string) => {
+    setRevokingInvite(inviteId)
+    try {
+      await revokeInvite(inviteId)
+    } catch (error) {
+      console.error('Error revoking invite:', error)
+      alert('Error revoking invite: ' + getErrorMessage(error))
+    } finally {
+      setRevokingInvite(null)
     }
   }
 
@@ -191,6 +257,73 @@ export function Admin() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* Invite Section */}
+        <div className="invite-section">
+          <h2>Invite Users</h2>
+          <form onSubmit={handleSendInvite} className="invite-form">
+            <input
+              type="email"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              placeholder="Email address"
+              className="invite-input"
+              disabled={sendingInvite}
+            />
+            <button
+              type="submit"
+              disabled={sendingInvite || !inviteEmail.trim()}
+              className="invite-button"
+            >
+              {sendingInvite ? 'Sending...' : 'Send Invite'}
+            </button>
+          </form>
+
+          {inviteError && <div className="invite-error">{inviteError}</div>}
+          {inviteSuccess && <div className="invite-success">{inviteSuccess}</div>}
+
+          {invites.length > 0 && (
+            <div className="pending-invites">
+              <h3>Pending Invites ({invites.length})</h3>
+              <ul className="invite-list">
+                {invites.map((invite) => {
+                  const expiresAt = new Date(invite.expiresAt)
+                  const daysLeft = Math.ceil((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+                  return (
+                    <li key={invite.id} className="invite-item">
+                      <div className="invite-info">
+                        <span className="invite-email">{invite.email}</span>
+                        <div className="invite-meta">
+                          <span className="invite-expiry">
+                            Expires in {daysLeft} day{daysLeft !== 1 ? 's' : ''}
+                          </span>
+                          {invite.emailSent === true && (
+                            <span className="invite-email-status sent">Email sent</span>
+                          )}
+                          {invite.emailSent === false && (
+                            <span className="invite-email-status failed" title={invite.emailError}>
+                              Email failed
+                            </span>
+                          )}
+                          {invite.emailSent === undefined && (
+                            <span className="invite-email-status pending">Sending...</span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleRevokeInvite(invite.id)}
+                        disabled={revokingInvite === invite.id}
+                        className="revoke-button"
+                      >
+                        {revokingInvite === invite.id ? 'Revoking...' : 'Revoke'}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )}
         </div>
 
         {/* Users Section */}

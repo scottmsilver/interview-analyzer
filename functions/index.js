@@ -141,8 +141,15 @@ exports.sendApprovalEmail = onDocumentCreated("users/{userId}", async (event) =>
   const userData = snapshot.data();
   const userId = event.params.userId;
 
-  // Only send email for new pending users
+  // Only process new pending users
   if (userData.approved !== false) {
+    return;
+  }
+
+  // Check if user has a valid invite - if so, auto-approve
+  const wasAutoApproved = await checkAndAutoApprove(userId, userData.email);
+  if (wasAutoApproved) {
+    console.log(`User ${userData.email} was auto-approved via invite, skipping approval email`);
     return;
   }
 
@@ -317,6 +324,129 @@ exports.approveUser = onRequest(async (req, res) => {
 });
 
 /**
+ * Sends an invite email when a new invite is created
+ */
+exports.sendInviteEmail = onDocumentCreated("invites/{inviteId}", async (event) => {
+  const snapshot = event.data;
+  if (!snapshot) {
+    console.log("No data associated with the event");
+    return;
+  }
+
+  const inviteData = snapshot.data();
+  const inviteId = event.params.inviteId;
+
+  // Only send email for pending invites
+  if (inviteData.status !== "pending") {
+    return;
+  }
+
+  const signupUrl = `https://interview-analyzer-prod.web.app/?invite=${inviteData.token}`;
+
+  // Get the admin who sent the invite
+  const adminDoc = await admin.firestore().collection("admins").doc(inviteData.invitedBy).get();
+  const adminData = adminDoc.exists ? adminDoc.data() : null;
+
+  if (!adminData?.gmailTokens) {
+    console.log("Admin has no Gmail authorization. Logging instead:");
+    console.log(`
+📧 Invite Email
+================================
+Invited: ${inviteData.email}
+Invite ID: ${inviteId}
+Signup URL: ${signupUrl}
+Expires: ${inviteData.expiresAt}
+    `);
+
+    // Update invite document with email failure status
+    await admin.firestore().collection("invites").doc(inviteId).update({
+      emailSent: false,
+      emailError: "Gmail not connected - please connect Gmail in Admin settings",
+    });
+
+    return;
+  }
+
+  try {
+    const oauth2Client = new google.auth.OAuth2(
+        OAUTH_CLIENT_ID,
+        OAUTH_CLIENT_SECRET,
+        OAUTH_REDIRECT_URI,
+    );
+
+    oauth2Client.setCredentials(adminData.gmailTokens);
+
+    const gmail = google.gmail({version: "v1", auth: oauth2Client});
+
+    const emailContent = `From: ${adminData.email}
+To: ${inviteData.email}
+Subject: You're invited to Interview Analyzer
+Content-Type: text/html; charset=utf-8
+
+<html>
+<body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <h2 style="color: #333;">You're Invited!</h2>
+  <p>You've been invited to join Interview Analyzer - a tool that provides thoughtful, constructive feedback on your PM interview practice.</p>
+
+  <p style="margin: 30px 0;">
+    <a href="${signupUrl}"
+       style="background: #6366f1; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: 500;">
+      Accept Invitation
+    </a>
+  </p>
+
+  <p style="color: #666; font-size: 14px;">
+    This invitation will expire in 7 days.
+  </p>
+
+  <p style="color: #666; font-size: 14px;">
+    Simply click the button above and sign in with your Google account (${inviteData.email}) to get started.
+  </p>
+</body>
+</html>`;
+
+    const encodedEmail = Buffer.from(emailContent)
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+
+    await gmail.users.messages.send({
+      userId: "me",
+      requestBody: {
+        raw: encodedEmail,
+      },
+    });
+
+    // Update invite document with email success status
+    await admin.firestore().collection("invites").doc(inviteId).update({
+      emailSent: true,
+      emailSentAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    console.log(`✅ Invite email sent to ${inviteData.email}`);
+  } catch (error) {
+    console.error("Error sending invite email:", error);
+
+    // Update invite document with email failure status
+    await admin.firestore().collection("invites").doc(inviteId).update({
+      emailSent: false,
+      emailError: error.message || "Unknown error",
+    });
+
+    console.log(`
+📧 Invite Email (email failed)
+================================
+Invited: ${inviteData.email}
+Signup URL: ${signupUrl}
+Error: ${error.message}
+    `);
+  }
+
+  return null;
+});
+
+/**
  * Generate a simple token for approval link
  */
 function generateToken(userId) {
@@ -330,4 +460,47 @@ function generateToken(userId) {
  */
 function verifyToken(userId, token) {
   return token === generateToken(userId);
+}
+
+/**
+ * Check if user email has a pending valid invite and auto-approve if so
+ */
+async function checkAndAutoApprove(userId, userEmail) {
+  if (!userEmail) return false;
+
+  const normalizedEmail = userEmail.toLowerCase();
+  const now = new Date();
+
+  // Find matching pending invite
+  const invitesSnapshot = await admin.firestore()
+      .collection("invites")
+      .where("email", "==", normalizedEmail)
+      .where("status", "==", "pending")
+      .get();
+
+  for (const inviteDoc of invitesSnapshot.docs) {
+    const inviteData = inviteDoc.data();
+    const expiresAt = new Date(inviteData.expiresAt);
+
+    if (expiresAt > now) {
+      // Valid invite found - auto-approve user
+      await admin.firestore().collection("users").doc(userId).update({
+        approved: true,
+        approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+        approvedViaInvite: inviteDoc.id,
+      });
+
+      // Mark invite as accepted
+      await inviteDoc.ref.update({
+        status: "accepted",
+        acceptedAt: admin.firestore.FieldValue.serverTimestamp(),
+        acceptedByUserId: userId,
+      });
+
+      console.log(`✅ Auto-approved user ${userEmail} via invite ${inviteDoc.id}`);
+      return true;
+    }
+  }
+
+  return false;
 }
