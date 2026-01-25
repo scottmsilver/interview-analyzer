@@ -201,8 +201,8 @@ export function Admin() {
     return () => unsubscribe()
   }, [user.uid])
 
-  // Derived state for Gmail authorization
-  const gmailAuthorized = !!adminData?.gmailTokens
+  // Derived state for Gmail authorization - must have refresh_token to be valid
+  const gmailAuthorized = !!(adminData?.gmailTokens?.refresh_token)
 
   useEffect(() => {
     // Listen for real-time updates to invites

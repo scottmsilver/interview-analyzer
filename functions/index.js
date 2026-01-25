@@ -50,6 +50,7 @@ exports.authorizeGmail = onRequest(async (req, res) => {
 
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: "offline",
+    prompt: "consent", // Force consent to always get refresh_token
     scope: scopes,
     state: adminUid, // Pass admin UID in state to identify on callback
   });
@@ -346,7 +347,8 @@ exports.sendInviteEmail = onDocumentCreated("invites/{inviteId}", async (event) 
     return;
   }
 
-  const signupUrl = `https://interview-analyzer-prod.web.app/?invite=${inviteData.token}`;
+  const baseUrl = inviteData.origin || "https://interview-analyzer-web.fly.dev";
+  const signupUrl = `${baseUrl}/?invite=${inviteData.token}`;
 
   // Get the admin who sent the invite
   const adminDoc = await admin.firestore().collection("admins").doc(inviteData.invitedBy).get();

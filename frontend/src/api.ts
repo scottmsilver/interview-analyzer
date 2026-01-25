@@ -100,9 +100,15 @@ export function subscribeToUserApproval(
 // Admins API
 // =============================================================================
 
+export interface GmailTokens {
+  access_token?: string
+  refresh_token?: string
+  expiry_date?: number
+}
+
 export interface AdminRecord {
   email: string
-  gmailTokens?: unknown
+  gmailTokens?: GmailTokens
   gmailAuthorizedAt?: string
   gmailTokenRefreshedAt?: string
   gmailTokenError?: string
@@ -226,13 +232,14 @@ export interface InviteRecord {
   expiresAt: string
   status: 'pending' | 'accepted' | 'revoked' | 'expired'
   token: string
+  origin?: string
   acceptedAt?: string
   emailSent?: boolean
   emailError?: string
   emailSentAt?: string
 }
 
-export async function createInvite(email: string, invitedBy: string): Promise<string> {
+export async function createInvite(email: string, invitedBy: string, origin?: string): Promise<string> {
   const token = crypto.randomUUID()
   const createdAt = new Date()
   const expiresAt = new Date(createdAt.getTime() + 7 * 24 * 60 * 60 * 1000) // 7 days
@@ -244,6 +251,7 @@ export async function createInvite(email: string, invitedBy: string): Promise<st
     expiresAt: expiresAt.toISOString(),
     status: 'pending',
     token,
+    origin: origin || window.location.origin, // Store origin for email link
   })
   return docRef.id
 }
