@@ -63,14 +63,8 @@ export async function getAllCachedCriteria(): Promise<(CachedCriteria & { id: st
  * Research interview criteria using Claude agent and save to cache
  */
 export async function refreshCriteriaCache(interviewType: string): Promise<string> {
-  const searchQueries: Record<string, string> = {
-    'google-apm': 'Google APM Associate Product Manager interview evaluation criteria 2025 what they look for',
-    'meta-pm': 'Meta Facebook Product Manager interview evaluation criteria 2025 what they look for',
-    'amazon-pm': 'Amazon Product Manager interview Leadership Principles evaluation criteria 2025',
-    'generic': 'Product Manager interview evaluation criteria best practices 2025'
-  };
-
-  const searchQuery = searchQueries[interviewType] || searchQueries['generic'];
+  const currentYear = new Date().getFullYear();
+  const searchQuery = `${interviewType.replace(/-/g, ' ')} interview evaluation criteria ${currentYear} what they look for`;
 
   console.log(`[CriteriaCache] Researching criteria for ${interviewType}...`);
 

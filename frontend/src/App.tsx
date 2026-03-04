@@ -834,7 +834,7 @@ function MainContent() {
                   Take a deep breath. You've got this!
                 </p>
                 <p className="welcome-subtitle">
-                  Get thoughtful, constructive feedback on your PM interview practice.
+                  Get thoughtful, constructive feedback on your interview practice.
                 </p>
                 <p className="welcome-subtitle">
                   Upload your transcript above. Analysis takes about 1 to 2 minutes.

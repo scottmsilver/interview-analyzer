@@ -103,8 +103,8 @@ app.post('/api/analyze/stream', upload.single('transcript'), async (req: Request
       });
     }
 
-    // Get interview type from form data (default to google-apm)
-    const interviewType = (req.body.interviewType as AnalysisOptions['interviewType']) || 'google-apm';
+    // Get interview type from form data
+    const interviewType = (req.body.interviewType as AnalysisOptions['interviewType']) || 'generic';
 
     // Get cached criteria if provided (from frontend Firestore cache)
     const cachedCriteria = req.body.cachedCriteria as string | undefined;
@@ -214,7 +214,7 @@ app.post('/api/analyze', upload.single('transcript'), async (req: Request, res: 
     }
 
     // Get interview type
-    const interviewType = (req.body.interviewType as AnalysisOptions['interviewType']) || 'google-apm';
+    const interviewType = (req.body.interviewType as AnalysisOptions['interviewType']) || 'generic';
 
     // Get cached criteria if provided
     const cachedCriteria = req.body.cachedCriteria as string | undefined;
@@ -245,6 +245,7 @@ app.post('/api/analyze', upload.single('transcript'), async (req: Request, res: 
  * Get supported interview types
  */
 app.get('/api/interview-types', (req: Request, res: Response) => {
+  // Default fallback types — the frontend primarily loads types from Firestore
   res.json({
     types: [
       {
@@ -264,8 +265,8 @@ app.get('/api/interview-types', (req: Request, res: Response) => {
       },
       {
         id: 'generic',
-        name: 'Generic PM',
-        description: 'General Product Manager interview'
+        name: 'General Interview',
+        description: 'General interview evaluation'
       }
     ]
   });
@@ -289,12 +290,10 @@ app.post('/api/admin/refresh-criteria', async (req: Request, res: Response) => {
   }
 
   const { interviewType } = req.body;
-  const validTypes = ['google-apm', 'meta-pm', 'amazon-pm', 'generic'];
 
-  if (!interviewType || !validTypes.includes(interviewType)) {
+  if (!interviewType || typeof interviewType !== 'string' || interviewType.trim().length === 0) {
     return res.status(400).json({
-      error: 'Invalid interview type',
-      validTypes
+      error: 'Interview type is required'
     });
   }
 

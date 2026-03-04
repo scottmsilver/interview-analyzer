@@ -37,7 +37,7 @@ export function Login({ onLogin }: LoginProps) {
             Take a deep breath. You've got this!
           </p>
           <p className="login-description">
-            Get thoughtful, constructive feedback on your PM interview practice.
+            Get thoughtful, constructive feedback on your interview practice.
           </p>
           <p className="login-description">
             Upload a transcript and receive detailed analysis in about 1 to 2 minutes.

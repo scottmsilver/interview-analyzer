@@ -22,7 +22,7 @@ export const INTERVIEW_TYPES: InterviewType[] = [
   { id: 'google-apm', name: 'Google APM' },
   { id: 'meta-pm', name: 'Meta PM' },
   { id: 'amazon-pm', name: 'Amazon PM' },
-  { id: 'generic', name: 'Generic PM' },
+  { id: 'generic', name: 'General Interview' },
 ]
 
 export function getInterviewTypeLabel(type: string): string {

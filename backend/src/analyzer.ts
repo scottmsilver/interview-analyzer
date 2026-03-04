@@ -152,17 +152,16 @@ TASK - MULTI-STEP WORKFLOW:
     }
   };
 
-  const prompts: Record<string, string> = {
-    'google-apm': `You are an expert Google APM (Associate Product Manager) interviewer with 10+ years of experience.
+  // Build criteria section based on whether we have cached criteria
+  const criteriaSection = cachedCriteria
+    ? `\nEVALUATION CRITERIA:\n${cachedCriteria}\n`
+    : '';
 
-EVALUATION CRITERIA FOR GOOGLE APM:
-- Product Sense: User focus, creativity, prioritization, strategic alignment with company goals
-- Analytical Thinking: Metrics definition, A/B testing, data-driven decisions, SQL/analytics
-- Communication: Structure, pacing, clarity, checking in with interviewer every 45-60 seconds
-- Technical Depth: Understanding of AI/ML, system design, feasibility, working with engineers
-- Strategic Thinking: Business impact, competitive analysis, ecosystem effects
-- "Googleyness": User-first thinking, collaboration, handling ambiguity
-${getWorkflowSteps('Google APM interview evaluation criteria 2025')}
+  const researchQuery = `${interviewType} interview evaluation criteria ${new Date().getFullYear()} what they look for`;
+
+  return `You are an expert interviewer evaluating a candidate for a ${interviewType} role. You have 10+ years of experience conducting and evaluating interviews for this type of position.
+${criteriaSection}
+${getWorkflowSteps(researchQuery)}
 
 TRANSCRIPT:
 ${transcript}
@@ -176,52 +175,7 @@ Use clear markdown formatting with:
 - Bullet points for lists
 - Tables where appropriate
 
-Be direct, specific, and constructive. This is for learning, so honest feedback is most valuable.`,
-
-    'meta-pm': `You are an expert Meta PM interviewer with deep knowledge of Meta's interview process.
-
-EVALUATION CRITERIA FOR META PM:
-- Product Sense: User empathy, feature prioritization, Meta's mission alignment
-- Execution: Roadmapping, tradeoffs, working with cross-functional teams
-- Analytics: Metrics trees, debugging metrics drops, experimentation
-- Leadership: Influence without authority, conflict resolution
-- Strategy: Vision, competitive positioning, business model understanding
-
-Follow the same multi-step workflow as above, but adjusted for Meta's specific criteria.
-
-TRANSCRIPT:
-${transcript}`,
-
-    'amazon-pm': `You are an expert Amazon PM interviewer familiar with Amazon's Leadership Principles.
-
-EVALUATION CRITERIA FOR AMAZON PM:
-- Customer Obsession: Starting with the customer and working backwards
-- Leadership Principles: Ownership, Bias for Action, Think Big, Dive Deep, etc.
-- Working Backwards: PRD/Press Release approach
-- Metrics: Input vs Output metrics, mechanisms for driving results
-- Technical Depth: SQL, APIs, system design basics
-
-Follow the same multi-step workflow as above, but evaluate through the lens of Amazon Leadership Principles.
-
-TRANSCRIPT:
-${transcript}`,
-
-    'generic': `You are an expert Product Manager interviewer with experience at top tech companies.
-
-EVALUATION CRITERIA:
-- Product Thinking: User focus, problem definition, solution creativity
-- Analytical Skills: Metrics, data analysis, hypothesis testing
-- Communication: Structure, clarity, conciseness
-- Strategic Thinking: Business impact, prioritization
-- Execution: Practical considerations, feasibility
-
-Follow the same multi-step workflow as above.
-
-TRANSCRIPT:
-${transcript}`
-  };
-
-  return prompts[interviewType] || prompts['generic'];
+Be direct, specific, and constructive. This is for learning, so honest feedback is most valuable.`;
 }
 
 /**
@@ -229,7 +183,7 @@ ${transcript}`
  */
 export async function analyzeInterview(
   transcript: string,
-  options: AnalysisOptions = { interviewType: 'google-apm' }
+  options: AnalysisOptions = { interviewType: 'generic' }
 ): Promise<AsyncGenerator<AnalysisMessage>> {
   const prompt = buildAnalysisPrompt(transcript, options.interviewType, options.cachedCriteria);
 
@@ -362,29 +316,22 @@ export async function analyzeInterview(
  */
 export async function analyzeInterviewDirectAPI(
   transcript: string,
-  options: AnalysisOptions = { interviewType: 'google-apm' }
+  options: AnalysisOptions = { interviewType: 'generic' }
 ): Promise<AsyncGenerator<AnalysisMessage>> {
   const interviewType = options.interviewType;
   const cachedCriteria = options.cachedCriteria;
 
-  // Build prompt - encourage web search if no cached criteria
-  const searchInstruction = cachedCriteria
-    ? `\nCURRENT INTERVIEW STANDARDS (cached):\n${cachedCriteria}\n`
-    : `\nIMPORTANT: First use the web_search tool to research current ${interviewType} interview evaluation criteria and standards for 2025/2026.\n`;
+  // Build prompt - use cached criteria or encourage web search
+  const criteriaSection = cachedCriteria
+    ? `\nEVALUATION CRITERIA:\n${cachedCriteria}\n`
+    : `\nIMPORTANT: First use the web_search tool to research current ${interviewType} interview evaluation criteria and standards for ${new Date().getFullYear()}.\n`;
 
-  const prompt = `You are an expert ${interviewType.replace('-', ' ').toUpperCase()} interviewer with 10+ years of experience.
-${searchInstruction}
-EVALUATION CRITERIA:
-- Product Sense: User focus, creativity, prioritization, strategic alignment
-- Analytical Thinking: Metrics definition, A/B testing, data-driven decisions
-- Communication: Structure, pacing, clarity
-- Technical Depth: System design, feasibility, working with engineers
-- Strategic Thinking: Business impact, competitive analysis
-
+  const prompt = `You are an expert interviewer evaluating a candidate for a ${interviewType} role. You have 10+ years of experience conducting and evaluating interviews for this type of position.
+${criteriaSection}
 TASK:
 1. ${cachedCriteria ? '' : 'Research current interview standards (use web_search tool)\n2. '}Parse the transcript and identify each distinct question and response
 ${cachedCriteria ? '2' : '3'}. Evaluate each question:
-   - Question type (product design, analytical, strategic, etc.)
+   - Question type and category
    - Score out of 10
    - Key strengths with timestamps (HH:MM:SS format)
    - Critical weaknesses with timestamps
@@ -516,7 +463,7 @@ Be direct, specific, and constructive.`;
  */
 export async function analyzeInterviewSync(
   transcript: string,
-  options: AnalysisOptions = { interviewType: 'google-apm' }
+  options: AnalysisOptions = { interviewType: 'generic' }
 ): Promise<string> {
   const generator = await analyzeInterview(transcript, options);
 
