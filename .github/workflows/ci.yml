@@ -1,5 +1,5 @@
 name: CI/CD Pipeline
-on:
+true:
   push:
     branches:
     - main
@@ -95,10 +95,9 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     - name: Check required documentation exists
-      run: "required_docs=(\n  \"README.md\"\n  \"ARCHITECTURE_V2.md\"\n  \"AGENT.md\"\n  \"BRAND_GUIDELINES.md\"\n)\n\nfor\
-        \ doc in \"${required_docs[@]}\"; do\n  if [ ! -f \"$doc\" ]; then\n    echo \"ERROR: Required documentation file\
-        \ $doc is missing!\"\n    exit 1\n  fi\n  echo \"\u2713 $doc exists\"\ndone\n\necho \"All required documentation files\
-        \ present.\"\n"
+      run: "required_docs=(\n  \"README.md\"\n  \"ARCHITECTURE.md\"\n  \"BRAND_GUIDELINES.md\"\n)\n\nfor doc in \"${required_docs[@]}\"\
+        ; do\n  if [ ! -f \"$doc\" ]; then\n    echo \"ERROR: Required documentation file $doc is missing!\"\n    exit 1\n\
+        \  fi\n  echo \"\u2713 $doc exists\"\ndone\n\necho \"All required documentation files present.\"\n"
     - name: Validate markdown formatting
       uses: DavidAnson/markdownlint-cli2-action@v14
       with:
