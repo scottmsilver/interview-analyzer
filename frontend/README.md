@@ -1,6 +1,6 @@
 # Interview Analyzer - Frontend
 
-React frontend for the PM Interview Analyzer.
+React frontend for the Interview Analyzer.
 
 ## Setup
 
@@ -14,7 +14,7 @@ React frontend for the PM Interview Analyzer.
    cp .env.example .env
    ```
 
-   Edit `.env` if you need to change the backend API URL (default: `http://localhost:3001`).
+   Edit `.env` if you need to change the backend API URL (default: `http://localhost:9002`).
 
 3. **Run in development mode:**
    ```bash
@@ -31,7 +31,7 @@ React frontend for the PM Interview Analyzer.
 ## Features
 
 - 📤 **File Upload**: Upload transcript files (.txt format)
-- 🎯 **Interview Type Selection**: Choose from Google APM, Meta PM, Amazon PM, or Generic PM
+- 🎯 **Interview Type Selection**: Choose from built-in types or admin-defined custom types
 - ⚡ **Real-time Streaming**: See analysis results as they're generated
 - 📊 **Beautiful Markdown Rendering**: Results displayed with syntax highlighting
 - 📋 **Copy to Clipboard**: Easy sharing of analysis results

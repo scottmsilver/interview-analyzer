@@ -1,4 +1,4 @@
-# 🚀 Setup Guide - PM Interview Analyzer
+# 🚀 Setup Guide - Interview Analyzer
 
 Complete guide to get your interview analyzer up and running.
 
@@ -36,7 +36,7 @@ nano .env
 Your `.env` file should look like:
 ```
 ANTHROPIC_API_KEY=sk-ant-api03-your-actual-key-here
-PORT=3001
+PORT=9002
 NODE_ENV=development
 ```
 
@@ -94,12 +94,12 @@ npm run dev
 
 Open your browser and go to: **http://localhost:5173**
 
-You should see the PM Interview Analyzer interface!
+You should see the Interview Analyzer interface!
 
 ## 🧪 Testing the Full System
 
 1. **Open the app**: http://localhost:5173
-2. **Select interview type**: Choose "Google APM"
+2. **Select interview type**: Choose an interview type from the dropdown
 3. **Upload transcript**: Click the file upload area and select `/home/ssilver/development/apmi/transcript`
 4. **Analyze**: Click the "Analyze Interview" button
 5. **Watch magic happen**: You'll see real-time analysis streaming in!
@@ -114,8 +114,8 @@ You should see the PM Interview Analyzer interface!
 **Error**: `Module not found`
 - **Fix**: Run `npm install` in the backend directory
 
-**Error**: `Port 3001 already in use`
-- **Fix**: Kill the existing process: `lsof -ti:3001 | xargs kill -9`
+**Error**: `Port 9002 already in use`
+- **Fix**: Kill the existing process: `lsof -ti:9002 | xargs kill -9`
 
 ### Frontend won't start
 
@@ -136,8 +136,8 @@ You should see the PM Interview Analyzer interface!
 ### Frontend can't connect to backend
 
 **Symptom**: Network errors in console
-- **Fix**: Make sure backend is running on port 3001
-- Check: `curl http://localhost:3001/health`
+- **Fix**: Make sure backend is running on port 9002
+- Check: `curl http://localhost:9002/health`
 
 ## 📊 What to Expect
 
@@ -208,10 +208,10 @@ Common issues are usually:
 
 Once everything works:
 
-1. **Try different interview types**: Meta PM, Amazon PM, etc.
-2. **Analyze multiple transcripts**: Compare different interview attempts
-3. **Customize prompts**: Edit `backend/src/analyzer.ts` to adjust evaluation criteria
-4. **Deploy it**: Use Railway/Heroku for backend, Vercel/Netlify for frontend
+1. **Try different interview types**: Use admin-defined types or the built-in defaults
+2. **Create custom types**: Use the admin panel to define new interview types with custom criteria
+3. **Analyze multiple transcripts**: Compare different interview attempts
+4. **Deploy it**: Deploy to Fly.io (see `fly.toml` configs in backend/ and frontend/)
 
 ## 📚 Additional Resources
 

@@ -1,6 +1,6 @@
 # Interview Analyzer
 
-An AI-powered platform for analyzing Product Manager interview transcripts using Claude 3.5 Sonnet. Get detailed, constructive feedback to improve your interview performance.
+An AI-powered platform for analyzing interview transcripts using Claude. Get detailed, constructive feedback to improve your interview performance.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)
@@ -9,8 +9,8 @@ An AI-powered platform for analyzing Product Manager interview transcripts using
 
 ## Features
 
-- **AI-Powered Analysis**: Leverages Claude 3.5 Sonnet for comprehensive interview feedback
-- **Multiple Interview Types**: Support for Google APM, Meta PM, Amazon PM, and generic PM interviews
+- **AI-Powered Analysis**: Leverages Claude for comprehensive interview feedback
+- **Multiple Interview Types**: Built-in types plus admin-defined custom interview types
 - **Real-Time Streaming**: See analysis results as they're generated
 - **System-Agent Dialogue**: Visual indicator of AI thinking process
 - **Secure Authentication**: Firebase Auth with Google Sign-In
@@ -50,7 +50,7 @@ An AI-powered platform for analyzing Product Manager interview transcripts using
 
    Create `frontend/.env`:
    ```env
-   VITE_API_URL=http://localhost:3001
+   VITE_API_URL=http://localhost:9002
    VITE_FIREBASE_API_KEY=your_firebase_api_key
    VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
    VITE_FIREBASE_PROJECT_ID=your_project_id
@@ -62,7 +62,7 @@ An AI-powered platform for analyzing Product Manager interview transcripts using
    Create `backend/.env`:
    ```env
    ANTHROPIC_API_KEY=your_anthropic_api_key
-   PORT=3001
+   PORT=9002
    ```
 
 4. **Run development servers**
@@ -76,7 +76,7 @@ An AI-powered platform for analyzing Product Manager interview transcripts using
 
 5. **Access the application**
    - Frontend: http://localhost:5173
-   - Backend API: http://localhost:3001
+   - Backend API: http://localhost:9002
 
 ## Usage
 
@@ -93,19 +93,16 @@ Interview Analyzer uses a modern, cloud-native architecture:
 
 - **Frontend**: React 18 + TypeScript + Vite
 - **Backend**: Node.js + Express
-- **AI**: Anthropic Claude 3.5 Sonnet
+- **AI**: Anthropic Claude
 - **Database**: Firebase Firestore
 - **Authentication**: Firebase Auth
-- **Deployment**: Firebase Hosting + Cloud Run
-
-For detailed architecture information, see [ARCHITECTURE_V2.md](./ARCHITECTURE_V2.md).
+- **Deployment**: Fly.io (frontend + backend)
 
 ## Documentation
 
-- **[ARCHITECTURE_V2.md](./ARCHITECTURE_V2.md)** - Complete system architecture
-- **[AGENT.md](./AGENT.md)** - AI agent integration details
+- **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** - Detailed setup instructions
+- **[FIREBASE_SETUP.md](./FIREBASE_SETUP.md)** - Firebase configuration guide
 - **[BRAND_GUIDELINES.md](./BRAND_GUIDELINES.md)** - Design system and UI guidelines
-- **[CONTRIBUTING.md](./CONTRIBUTING.md)** - How to contribute
 
 ## Technology Stack
 
@@ -114,12 +111,12 @@ For detailed architecture information, see [ARCHITECTURE_V2.md](./ARCHITECTURE_V
 | Frontend Framework | React 18 + TypeScript |
 | Build Tool | Vite |
 | Backend | Node.js + Express |
-| AI Model | Claude 3.5 Sonnet |
+| AI Model | Anthropic Claude |
 | Database | Firebase Firestore |
 | Authentication | Firebase Auth |
 | Styling | CSS Modules |
 | Routing | React Router v6 |
-| Deployment | Firebase Hosting + Cloud Run |
+| Deployment | Fly.io |
 
 ## Key Features
 
@@ -150,22 +147,21 @@ For detailed architecture information, see [ARCHITECTURE_V2.md](./ARCHITECTURE_V
 interview-analyzer/
 ├── frontend/               # React frontend
 │   ├── src/
-│   │   ├── components/    # React components
-│   │   ├── services/      # Firebase and API services
-│   │   ├── assets/        # Static assets
-│   │   └── App.tsx        # Main application
+│   │   ├── App.tsx        # Main application
+│   │   ├── api.ts         # Firebase and API services
+│   │   ├── components.tsx # Shared components
+│   │   └── types.ts       # TypeScript types
 │   └── package.json
 ├── backend/               # Express backend
 │   ├── src/
-│   │   ├── routes/       # API routes
-│   │   ├── services/     # Business logic
-│   │   └── server.js     # Server entry point
+│   │   ├── analyzer.ts    # Analysis engine
+│   │   ├── server.ts      # Express server
+│   │   └── criteria-cache.ts # Criteria management
 │   └── package.json
 ├── .github/              # GitHub templates and workflows
-├── ARCHITECTURE_V2.md    # Architecture documentation
-├── AGENT.md             # AI agent documentation
-├── BRAND_GUIDELINES.md  # Design system
-└── CONTRIBUTING.md      # Contribution guidelines
+├── SETUP_GUIDE.md        # Setup instructions
+├── FIREBASE_SETUP.md     # Firebase configuration
+└── BRAND_GUIDELINES.md   # Design system
 ```
 
 ### Building for Production
@@ -182,30 +178,21 @@ npm run build
 
 ### Deployment
 
+**Backend (Fly.io)**
+```bash
+cd backend
+fly deploy
+```
+
 **Frontend (Fly.io)**
 ```bash
 cd frontend
 fly deploy
 ```
 
-**Backend (Cloud Run)**
+**Firebase (Firestore rules and indexes)**
 ```bash
-cd backend
-gcloud run deploy interview-analyzer-api \
-  --source . \
-  --region us-central1 \
-  --allow-unauthenticated
-```
-
-**Firebase (Firestore rules, indexes, and Cloud Functions)**
-```bash
-# Deploy everything
-firebase deploy --only firestore:rules,firestore:indexes,functions
-
-# Or deploy individually
-firebase deploy --only firestore:rules
-firebase deploy --only firestore:indexes
-firebase deploy --only functions
+firebase deploy --only firestore:rules,firestore:indexes
 ```
 
 ## Contributing
@@ -247,7 +234,7 @@ This project is licensed under the MIT License - see the [LICENSE](./LICENSE) fi
 - [ ] Multi-language support
 - [ ] Voice transcript processing
 - [ ] Comparative analysis across interviews
-- [ ] Custom evaluation criteria
+- [x] Custom evaluation criteria
 - [ ] Video analysis integration
 - [ ] Mock interview practice mode
 
@@ -259,6 +246,6 @@ This project is licensed under the MIT License - see the [LICENSE](./LICENSE) fi
 
 ---
 
-**Made with care for Product Managers preparing for interviews**
+**Made with care for people preparing for interviews**
 
-Last Updated: November 2024
+Last Updated: March 2026

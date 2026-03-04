@@ -1,6 +1,6 @@
 # Interview Analyzer - Backend API
 
-Backend service for analyzing PM interview transcripts using Claude Agent SDK.
+Backend service for analyzing interview transcripts using Claude API.
 
 ## Setup
 
@@ -77,7 +77,8 @@ Analyze an interview transcript (non-streaming).
 - Content-Type: `multipart/form-data`
 - Body:
   - `transcript` (file): The transcript file (.txt)
-  - `interviewType` (string, optional): Interview type (default: "google-apm")
+  - `interviewType` (string, optional): Interview type (default: "generic")
+  - `cachedCriteria` (string, optional): Pre-fetched evaluation criteria
 
 **Response:**
 ```json
@@ -85,7 +86,7 @@ Analyze an interview transcript (non-streaming).
   "success": true,
   "analysis": "... detailed analysis markdown ...",
   "metadata": {
-    "interviewType": "google-apm",
+    "interviewType": "generic",
     "transcriptLength": 59231,
     "analyzedAt": "2025-11-11T12:00:00.000Z"
   }
@@ -105,25 +106,16 @@ Analyze an interview transcript with real-time streaming (recommended).
 ## Environment Variables
 
 - `ANTHROPIC_API_KEY` (required): Your Anthropic API key
-- `PORT` (optional): Server port (default: 3001)
+- `PORT` (optional): Server port (default: 9002)
 - `NODE_ENV` (optional): Environment (development/production)
 - `ALLOWED_ORIGINS` (optional): CORS allowed origins
 
 ## Architecture
 
 - **Express** - Web server framework
-- **Claude Agent SDK** - AI agent for autonomous interview analysis
+- **Claude API** - AI-powered interview analysis
 - **Multer** - File upload handling
 - **TypeScript** - Type-safe development
+- **Firebase Admin** - Authentication and data storage
 
-## Cost Estimates
-
-Approximate API costs per analysis:
-- Small transcript (10 min): ~$0.10
-- Medium transcript (30 min): ~$0.30
-- Large transcript (60 min): ~$0.50
-
-The Agent SDK performs multiple operations:
-1. Web search for current interview criteria
-2. Transcript analysis with detailed evaluation
-3. Self-review for quality assurance
+The analysis engine supports any interview type — evaluation criteria are loaded dynamically from admin-defined types in Firestore or via web search.
