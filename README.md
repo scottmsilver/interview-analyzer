@@ -100,6 +100,7 @@ Interview Analyzer uses a modern, cloud-native architecture:
 
 ## Documentation
 
+- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - System architecture and data model
 - **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** - Detailed setup instructions
 - **[FIREBASE_SETUP.md](./FIREBASE_SETUP.md)** - Firebase configuration guide
 - **[BRAND_GUIDELINES.md](./BRAND_GUIDELINES.md)** - Design system and UI guidelines
