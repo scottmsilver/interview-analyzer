@@ -1,0 +1,171 @@
+/* Activity log
+ *
+ * Mirrors the admin log viewer's table so the two logs read as one system,
+ * with the metrics tightened for a panel and the palette taken from the brand
+ * tokens in colors.css rather than the admin view's hardcoded greys.
+ *
+ * Scoped under .activity-log throughout so it cannot alter the admin page.
+ */
+
+.activity-log {
+  font-size: 0.8rem;
+}
+
+.activity-log-empty {
+  color: var(--text-light);
+  font-size: 0.8rem;
+  font-style: italic;
+  margin: 0.5rem 0;
+}
+
+.activity-log .log-table-wrapper {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--bg-card);
+}
+
+.activity-log .log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  table-layout: fixed;
+}
+
+.activity-log .log-table thead {
+  background: var(--bg-hover);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.activity-log .log-table th {
+  text-align: left;
+  padding: 0.4rem 0.65rem;
+  font-weight: 600;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-light);
+  white-space: nowrap;
+}
+
+.activity-log .log-table th:nth-child(1) { width: 58px; }
+.activity-log .log-table th:nth-child(2) { width: 78px; }
+.activity-log .log-table th:nth-child(3) { width: auto; }
+
+.activity-log .log-table tbody tr {
+  border-bottom: 1px solid var(--border-light);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.activity-log .log-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.activity-log .log-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+.activity-log .log-table tbody tr.selected {
+  background: var(--primary-50, #fdf8f6);
+}
+
+.activity-log .log-table td {
+  padding: 0.35rem 0.65rem;
+  vertical-align: top;
+}
+
+.activity-log .log-time {
+  color: var(--text-light);
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.activity-log .log-severity {
+  font-weight: 600;
+  font-size: 0.62rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Kind colours come from the brand palette, not the admin view's blues. */
+.activity-log .log-kind-agent    { color: var(--primary-700, #9a4f30); }
+.activity-log .log-kind-tool     { color: #4a6b7c; }
+.activity-log .log-kind-thinking { color: #8a6a3a; }
+.activity-log .log-kind-result   { color: var(--success, #738c5f); }
+.activity-log .log-kind-system   { color: var(--text-light); }
+.activity-log .log-kind-error    { color: var(--error, #c77a4b); }
+
+/* The admin table sets pre-wrap for plain text; these cells hold rendered
+   markdown, so normal wrapping applies instead. */
+.activity-log .log-message {
+  color: var(--text-secondary);
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Markdown inside a log line keeps inline proportions: no document margins. */
+.activity-log .log-markdown > :first-child { margin-top: 0; }
+.activity-log .log-markdown > :last-child { margin-bottom: 0; }
+.activity-log .log-markdown p { margin: 0 0 0.2rem; }
+.activity-log .log-markdown ul,
+.activity-log .log-markdown ol { margin: 0.1rem 0 0.2rem; padding-left: 1.1rem; }
+.activity-log .log-markdown li { margin: 0.05rem 0; }
+
+.activity-log .log-markdown code {
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 0.72rem;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-light);
+  border-radius: 3px;
+  padding: 0.05em 0.3em;
+}
+
+.activity-log .log-markdown pre {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  overflow-x: auto;
+  margin: 0.2rem 0;
+}
+
+.activity-log .log-markdown h1,
+.activity-log .log-markdown h2,
+.activity-log .log-markdown h3,
+.activity-log .log-markdown h4 {
+  font-size: 0.8rem;
+  margin: 0.15rem 0;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.activity-log .log-raw-row td {
+  padding: 0 0.65rem 0.4rem;
+  background: var(--bg-hover);
+}
+
+.activity-log .log-raw {
+  background: #2f2a26;
+  color: #e6ded5;
+  padding: 0.45rem 0.6rem;
+  border-radius: 4px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 0.68rem;
+  line-height: 1.4;
+  overflow-x: auto;
+  margin: 0;
+  max-height: 220px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-log .log-table tbody tr { transition: none; }
+}

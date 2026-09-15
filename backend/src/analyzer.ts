@@ -678,9 +678,16 @@ export async function analyzeInterviewSync(
 ): Promise<string> {
   const generator = await analyzeInterview(transcript, options);
 
+  // Only the result messages carry the evaluation. The generator also yields
+  // progress traffic - raw SDK events, tool calls and reasoning summaries -
+  // which is useful for the live log but must never be concatenated into the
+  // returned analysis. Summing every message is what produced output like
+  // "[system:init][stream_event]Thinking through..." in the response body.
   let fullAnalysis = '';
   for await (const message of generator) {
-    fullAnalysis += message.content;
+    if (message.type === 'result' || message.type === 'text') {
+      fullAnalysis += message.content;
+    }
   }
 
   return fullAnalysis;

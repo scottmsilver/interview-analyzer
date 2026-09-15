@@ -9,7 +9,7 @@ import { History } from './History'
 import { AnalysisView } from './AnalysisView'
 import { SharedView } from './SharedView'
 import { Layout } from './Layout'
-import { Toast, AnalysisMarkdown } from './components'
+import { Toast, AnalysisMarkdown, ActivityLog } from './components'
 import { CopyIcon } from './icons'
 import { useToast, useCopyToClipboard } from './hooks'
 import { generateShareId, formatDateTime } from './types'
@@ -40,217 +40,39 @@ export function useAuth() {
 }
 
 // Component for debug log entry
-function DebugLogEntry({ log }: { log: { content: string, raw: any } }) {
-  const [showRaw, setShowRaw] = useState(false)
+type Phase = { label: string; status: 'connected' | 'thinking' | 'waiting' }
 
-  // Determine which robot is speaking based on message type
-  const getRobotType = (_raw: any, content: string): 'agent' | 'system' | 'tool' => {
-    if (content.includes('tool') || content.includes('Tool') || content.includes('Executing')) return 'tool'
-    if (content.includes('System') || content.includes('SDK')) return 'system'
-    return 'agent'
+/**
+ * Map a progress message to a stable, human phase.
+ *
+ * Deliberately returns a fixed label rather than the message text. Reasoning
+ * summaries stream in continuously, so echoing their content into the status
+ * indicator produced a blur of half-finished sentences.
+ */
+function derivePhase(message: { content?: string; raw?: any }): Phase | null {
+  const rawType = message.raw?.type
+  const text = (message.content || '').toLowerCase()
+
+  if (rawType === 'thinking_delta' || rawType === 'thinking_summary' || text.startsWith('thinking')) {
+    return { label: 'Thinking through the evaluation', status: 'thinking' }
   }
-
-  const robotType = getRobotType(log.raw, log.content)
-
-  // Parse and format tool use messages
-  const parseToolUse = (raw: any, content: string) => {
-    // Handle bracketed system messages
-    if (content.startsWith('[') && content.includes(']')) {
-      const match = content.match(/^\[(.*?)\](.*)/)
-      if (match) {
-        const [, messageType, rest] = match
-        const cleanType = messageType.toLowerCase()
-
-        if (cleanType === 'system:init') {
-          return {
-            formatted: '→ System: Initializing agent...',
-            type: 'system-request'
-          }
-        } else if (cleanType === 'system message' || cleanType === 'system') {
-          return {
-            formatted: '→ System: Processing request...',
-            type: 'system-request'
-          }
-        } else if (cleanType === 'assistant') {
-          const message = rest?.trim()
-          if (message?.toLowerCase().includes('tool') || message?.toLowerCase().includes('search')) {
-            return {
-              formatted: `→ Agent: ${message || 'Preparing to execute tools...'}`,
-              type: 'agent-thinking'
-            }
-          }
-          return {
-            formatted: `→ Agent: ${message || 'Processing...'}`,
-            type: 'agent-response'
-          }
-        } else if (cleanType.includes('error')) {
-          return {
-            formatted: `⚠ Error: ${rest?.trim() || messageType}`,
-            type: 'error'
-          }
-        } else if (cleanType === 'user message from sdk') {
-          return {
-            formatted: '→ System: Request received',
-            type: 'system-request'
-          }
-        } else if (cleanType === 'streaming...' || cleanType === 'stream_delta') {
-          return {
-            formatted: '← Agent: Composing response...',
-            type: 'agent-response'
-          }
-        } else if (cleanType.includes('tool progress')) {
-          return {
-            formatted: `  ↳ ${rest?.trim() || 'Executing...'}`,
-            type: 'tool-execution'
-          }
-        } else {
-          // For other bracketed messages, show as system
-          return {
-            formatted: `→ System: ${messageType.replace(/:/g, ' ').replace(/_/g, ' ')}`,
-            type: 'system-request'
-          }
-        }
-      }
-    }
-
-    // Handle tool_result messages
-    if (raw?.type === 'tool_result') {
-      const content = raw.content || raw.result || ''
-      if (typeof content === 'string') {
-        // Truncate long results
-        const preview = content.slice(0, 60)
-        return {
-          formatted: `  ✓ Result: ${preview}${content.length > 60 ? '...' : ''}`,
-          type: 'tool-result'
-        }
-      }
-      return {
-        formatted: `  ✓ Result received`,
-        type: 'tool-result'
-      }
-    }
-
-    // Handle text messages
-    if (raw?.type === 'text' && raw?.text) {
-      const text = raw.text.slice(0, 80)
-      return {
-        formatted: `Agent: ${text}${raw.text.length > 80 ? '...' : ''}`,
-        type: 'text'
-      }
-    }
-
-    // Handle thinking messages
-    if (raw?.type === 'thinking' || (typeof raw === 'string' && raw.includes('thinking'))) {
-      return {
-        formatted: `Thinking...`,
-        type: 'thinking'
-      }
-    }
-
-    // Handle tool_use messages
-    if (raw?.type === 'tool_use' && raw?.tool) {
-      const tool = raw.tool
-      const input = raw.input || {}
-
-      // Format based on tool type
-      switch (tool) {
-        case 'WebSearch':
-          return {
-            formatted: `  ↳ Executing: WebSearch("${input.query || 'web search'}")`,
-            type: 'tool-execution'
-          }
-        case 'WebFetch':
-          return {
-            formatted: `  ↳ Executing: WebFetch(${input.url ? new URL(input.url).hostname : 'webpage'})`,
-            type: 'tool-execution'
-          }
-        case 'Read':
-          return {
-            formatted: `  ↳ Executing: Read(${input.file_path ? input.file_path.split('/').pop() : 'file'})`,
-            type: 'tool-execution'
-          }
-        case 'Write':
-          return {
-            formatted: `  ↳ Executing: Write(${input.file_path ? input.file_path.split('/').pop() : 'file'})`,
-            type: 'tool-execution'
-          }
-        case 'Edit':
-          return {
-            formatted: `  ↳ Executing: Edit(${input.file_path ? input.file_path.split('/').pop() : 'file'})`,
-            type: 'tool-execution'
-          }
-        case 'Bash':
-          return {
-            formatted: `  ↳ Executing: Bash(${input.command ? input.command.slice(0, 40) : 'command'})`,
-            type: 'tool-execution'
-          }
-        case 'TodoWrite':
-          return {
-            formatted: `  ↳ Executing: TodoWrite(updating task list)`,
-            type: 'tool-execution'
-          }
-        case 'Grep':
-          return {
-            formatted: `  ↳ Executing: Grep("${input.pattern || 'pattern'}")`,
-            type: 'tool-execution'
-          }
-        case 'Glob':
-          return {
-            formatted: `  ↳ Executing: Glob(${input.pattern || 'pattern'})`,
-            type: 'tool-execution'
-          }
-        default:
-          return {
-            formatted: `  ↳ Executing: ${tool}(${input.description || JSON.stringify(input).slice(0, 30)})`,
-            type: 'tool-execution'
-          }
-      }
-    }
-
-    // Check if it's a simple "Using tool" message
-    if (typeof log.content === 'string' && log.content.startsWith('Using tool:')) {
-      const toolName = log.content.replace('Using tool:', '').trim()
-      return {
-        formatted: `${toolName}()`,
-        type: 'tool'
-      }
-    }
-
-    return null
+  if (rawType === 'tool_use' || text.startsWith('using tool')) {
+    return { label: 'Researching interview standards', status: 'connected' }
   }
-
-  const toolParsed = parseToolUse(log.raw, log.content)
-
-  // If we successfully parsed a message, use that
-  const messageText = toolParsed ? toolParsed.formatted : log.content
-
-  // Robot emojis
-  const robots = {
-    agent: '🤖',
-    tool: '🔧',
-    system: '⚙️'
+  if (rawType === 'tool_result') {
+    return { label: 'Reading research results', status: 'connected' }
   }
-
-  return (
-    <div className={`robot-message robot-message-${robotType}`}>
-      <div className="robot-avatar">{robots[robotType]}</div>
-      <div className="robot-bubble">
-        <div className="robot-message-text">{messageText}</div>
-        {showRaw && (
-          <div className="robot-debug">
-            <pre>{JSON.stringify(log.raw, null, 2)}</pre>
-          </div>
-        )}
-      </div>
-      <button
-        className="robot-details-toggle"
-        onClick={() => setShowRaw(!showRaw)}
-        title={showRaw ? "Hide details" : "Show details"}
-      >
-        {showRaw ? '−' : '+'}
-      </button>
-    </div>
-  )
+  if (rawType === 'text' || text.startsWith('writing')) {
+    return { label: 'Writing the evaluation', status: 'connected' }
+  }
+  if (text.includes('waiting')) {
+    return { label: 'Waiting for the model', status: 'waiting' }
+  }
+  if (text.includes('system:init') || text.includes('starting')) {
+    return { label: 'Starting analysis', status: 'connected' }
+  }
+  // Unclassified traffic should not disturb whatever phase is showing.
+  return null
 }
 
 // Shared authenticated layout - handles auth and renders header once
@@ -385,7 +207,7 @@ function MainContent() {
   const [analysis, setAnalysis] = useState('')
   const [error, setError] = useState('')
   const [statusMessage, setStatusMessage] = useState('')
-  const [agentLogs, setAgentLogs] = useState<{content: string, raw: any}[]>([])
+  const [agentLogs, setAgentLogs] = useState<{content: string, raw: any, at: number}[]>([])
   const [showLogs, setShowLogs] = useState(false)
   const [showDebug, setShowDebug] = useState(false)
   const [isReplaying, setIsReplaying] = useState(false)
@@ -620,7 +442,8 @@ function MainContent() {
         setStatusMessage('Using cached interview criteria...')
         setAgentLogs(prev => [...prev, {
           content: '[system] Using cached interview criteria (skipping web search)',
-          raw: { type: 'cache_hit', interviewType }
+          raw: { type: 'cache_hit', interviewType },
+          at: Date.now()
         }])
       } else {
         setStatusMessage('No cached criteria, will research current standards...')
@@ -678,22 +501,19 @@ function MainContent() {
               if (message.type === 'raw') {
                 setAgentLogs(prev => [...prev, {
                   content: message.content,
-                  raw: message.raw || message
+                  raw: message.raw || message,
+                  at: Date.now()
                 }])
-                setStatusMessage(message.content)
-                // Update connection status based on message content
-                const lowerContent = message.content.toLowerCase()
-                if (lowerContent.includes('thinking') || lowerContent.includes('evaluating')) {
-                  setConnectionStatus('thinking')
-                  setWaitingStartTime(null)
-                } else if (lowerContent.includes('waiting')) {
-                  setConnectionStatus('waiting')
-                  if (!waitingStartTime) {
-                    setWaitingStartTime(Date.now())
-                  }
-                } else {
-                  setConnectionStatus('connected')
-                  setWaitingStartTime(null)
+
+                // The status line shows a steady phase, not live reasoning text.
+                // Reasoning arrives in short bursts many times a second; putting
+                // it here made the indicator flicker with half-sentences.
+                // The full detail still goes to the activity log above.
+                const phase = derivePhase(message)
+                if (phase) {
+                  setStatusMessage(phase.label)
+                  setConnectionStatus(phase.status)
+                  setWaitingStartTime(phase.status === 'waiting' ? (waitingStartTime || Date.now()) : null)
                 }
                 setLastHeartbeat(Date.now())
               } else if (message.type === 'result') {
@@ -1045,16 +865,14 @@ function MainContent() {
                     onClick={() => setShowDebug(!showDebug)}
                     className="debug-toggle-button"
                   >
-                    {showDebug ? '▼' : '▶'} Debug Logs ({agentLogs.length})
+                    {showDebug ? '▼' : '▶'} Activity log ({agentLogs.length})
                   </button>
                 </div>
 
                 {/* Debug Section - all logs */}
                 {showDebug && (
                   <div className="debug-logs">
-                    {agentLogs.map((log, i) => (
-                      <DebugLogEntry key={i} log={log} />
-                    ))}
+                    <ActivityLog entries={agentLogs} startedAt={analysisStartTime} />
                   </div>
                 )}
               </div>
