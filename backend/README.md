@@ -51,8 +51,9 @@ Health check endpoint.
 ```json
 {
   "status": "healthy",
-  "timestamp": "2025-11-11T12:00:00.000Z",
-  "apiKeyConfigured": true
+  "timestamp": "2026-09-15T12:00:00.000Z",
+  "apiKeyConfigured": true,
+  "model": "claude-opus-5"
 }
 ```
 
@@ -106,6 +107,7 @@ Analyze an interview transcript with real-time streaming (recommended).
 ## Environment Variables
 
 - `ANTHROPIC_API_KEY` (required): Your Anthropic API key
+- `ANTHROPIC_MODEL` (optional): Claude model ID (default: `claude-opus-5`)
 - `PORT` (optional): Server port (default: 9002)
 - `NODE_ENV` (optional): Environment (development/production)
 - `ALLOWED_ORIGINS` (optional): CORS allowed origins

@@ -6,7 +6,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import dotenv from 'dotenv';
-import { analyzeInterview, analyzeInterviewDirectAPI, analyzeInterviewSync, AnalysisOptions, AnalysisMethod } from './analyzer.js';
+import { analyzeInterview, analyzeInterviewDirectAPI, analyzeInterviewSync, AnalysisOptions, AnalysisMethod, getAnthropicModel } from './analyzer.js';
 import { refreshCriteriaCache, getAllCachedCriteria } from './criteria-cache.js';
 import { isFirebaseConfigured } from './firebase-admin.js';
 
@@ -71,7 +71,8 @@ app.get('/health', (req: Request, res: Response) => {
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    apiKeyConfigured: !!process.env.ANTHROPIC_API_KEY
+    apiKeyConfigured: !!process.env.ANTHROPIC_API_KEY,
+    model: getAnthropicModel()
   });
 });
 
@@ -132,38 +133,62 @@ app.post('/api/analyze/stream', upload.single('transcript'), async (req: Request
     })}\n\n`);
     res.flushHeaders(); // Force headers to be sent immediately
 
-    // Run analysis with selected method
-    const generator = method === 'agent-sdk'
-      ? await analyzeInterview(transcript, { interviewType, cachedCriteria })
-      : await analyzeInterviewDirectAPI(transcript, { interviewType, cachedCriteria });
+    // Get optional model override
+    const model = (req.body.model as string) || undefined;
 
-    for await (const message of generator) {
-      const data = JSON.stringify({
-        type: message.type,
-        content: message.content,
-        raw: (message as any).raw,
-        timestamp: message.timestamp.toISOString()
-      });
+    // Send keepalive heartbeats every 15 seconds so connection never idles out on proxies/browsers
+    const keepAlive = setInterval(() => {
+      if (!res.writableEnded) {
+        res.write(': keepalive\n\n');
+        if (typeof (res as any).flush === 'function') {
+          (res as any).flush();
+        }
+      }
+    }, 15000);
 
-      res.write(`data: ${data}\n\n`);
+    res.on('close', () => {
+      clearInterval(keepAlive);
+    });
 
-      // Force immediate flush to client (no buffering)
-      if (typeof (res as any).flush === 'function') {
-        (res as any).flush();
+    try {
+      // Run analysis with selected method
+      const generator = method === 'agent-sdk'
+        ? await analyzeInterview(transcript, { interviewType, cachedCriteria, model })
+        : await analyzeInterviewDirectAPI(transcript, { interviewType, cachedCriteria, model });
+
+      for await (const message of generator) {
+        if (res.destroyed || res.writableEnded) break;
+
+        const data = JSON.stringify({
+          type: message.type,
+          content: message.content,
+          raw: (message as any).raw,
+          timestamp: message.timestamp.toISOString()
+        });
+
+        res.write(`data: ${data}\n\n`);
+
+        // Force immediate flush to client (no buffering)
+        if (typeof (res as any).flush === 'function') {
+          (res as any).flush();
+        }
+
+        // Also log to console for debugging
+        console.log(`[Streaming to client] ${message.type}: ${message.content?.substring(0, 50)}...`);
       }
 
-      // Also log to console for debugging
-      console.log(`[Streaming to client] ${message.type}: ${message.content?.substring(0, 50)}...`);
+      // Send completion message if client is still connected
+      if (!res.destroyed && !res.writableEnded) {
+        res.write(`data: ${JSON.stringify({
+          type: 'complete',
+          message: 'Analysis complete',
+          timestamp: new Date().toISOString()
+        })}\n\n`);
+        res.end();
+      }
+    } finally {
+      clearInterval(keepAlive);
     }
-
-    // Send completion message
-    res.write(`data: ${JSON.stringify({
-      type: 'complete',
-      message: 'Analysis complete',
-      timestamp: new Date().toISOString()
-    })}\n\n`);
-
-    res.end();
 
   } catch (error) {
     console.error('Analysis error:', error);
@@ -216,11 +241,12 @@ app.post('/api/analyze', upload.single('transcript'), async (req: Request, res: 
     // Get interview type
     const interviewType = (req.body.interviewType as AnalysisOptions['interviewType']) || 'generic';
 
-    // Get cached criteria if provided
+    // Get cached criteria and optional model override if provided
     const cachedCriteria = req.body.cachedCriteria as string | undefined;
+    const model = (req.body.model as string) || undefined;
 
     // Run analysis with optional cached criteria
-    const analysis = await analyzeInterviewSync(transcript, { interviewType, cachedCriteria });
+    const analysis = await analyzeInterviewSync(transcript, { interviewType, cachedCriteria, model });
 
     res.json({
       success: true,
@@ -356,6 +382,7 @@ app.listen(PORT, () => {
   console.log(`\n🚀 Interview Analyzer API Server`);
   console.log(`📡 Listening on port ${PORT}`);
   console.log(`🔑 API Key configured: ${!!process.env.ANTHROPIC_API_KEY}`);
+  console.log(`🤖 Claude Model: ${getAnthropicModel()}`);
   console.log(`🔥 Firebase configured: ${isFirebaseConfigured()}`);
   console.log(`🔐 Admin API configured: ${!!process.env.ADMIN_API_KEY}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);

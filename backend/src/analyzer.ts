@@ -16,10 +16,94 @@ function getAnthropicClient(): Anthropic {
 
 export type AnalysisMethod = 'agent-sdk' | 'direct-api';
 
+export const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-5';
+
+/**
+ * Models a client is allowed to request via the `model` field on an analyze
+ * request. The override arrives from an untrusted HTTP body, so it is checked
+ * against this list rather than forwarded to the API as-is: an unchecked value
+ * lets an anonymous caller pick the most expensive model available on the
+ * operator's API key.
+ *
+ * The ANTHROPIC_MODEL env var is operator-controlled and is deliberately NOT
+ * constrained by this list.
+ */
+export const ALLOWED_ANTHROPIC_MODELS: ReadonlySet<string> = new Set([
+  'claude-opus-5',
+  'claude-sonnet-5',
+  'claude-haiku-4-5'
+]);
+
+/**
+ * The complete set of built-in tools the analysis agent can use. Passed as the
+ * SDK's `tools` option, which defines the base tool list; every other built-in
+ * is absent rather than merely unapproved. Analysis is a read-and-reason task
+ * over a transcript supplied in the request, so web lookup is all it needs.
+ */
+export const AGENT_ALLOWED_TOOLS: string[] = ['WebSearch'];
+
+/**
+ * Tools explicitly denied to the analysis agent. Anything that can execute a
+ * command, read the filesystem, or spawn a subagent is a path from an uploaded
+ * transcript to the server's credentials.
+ */
+export const AGENT_DISALLOWED_TOOLS: string[] = [
+  'Bash', 'BashOutput', 'KillShell',
+  'Read', 'Write', 'Edit', 'NotebookEdit',
+  'Glob', 'Grep',
+  'WebFetch',
+  'Task', 'TodoWrite'
+];
+
+/**
+ * Minimal environment for the agent subprocess.
+ *
+ * The server process holds several unrelated secrets (Brave, admin, Firebase).
+ * Spreading process.env into the agent puts all of them one tool call away from
+ * a prompt an untrusted user wrote, so only the variables the SDK actually
+ * needs are forwarded.
+ */
+export function buildAgentEnv(model: string): Record<string, string> {
+  const passthrough = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'USER'];
+  const env: Record<string, string> = {};
+
+  for (const key of passthrough) {
+    const value = process.env[key];
+    if (value) env[key] = value;
+  }
+
+  if (process.env.ANTHROPIC_API_KEY) {
+    env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  }
+  if (process.env.ANTHROPIC_BASE_URL) {
+    env.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
+  }
+
+  env.ANTHROPIC_MODEL = model;
+  return env;
+}
+
+export function getAnthropicModel(override?: string): string {
+  const fallback = process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL;
+
+  if (!override) return fallback;
+
+  if (!ALLOWED_ANTHROPIC_MODELS.has(override)) {
+    console.warn(
+      `[analyzer] Ignoring unsupported model override "${override}"; using "${fallback}". ` +
+      `Allowed: ${[...ALLOWED_ANTHROPIC_MODELS].join(', ')}`
+    );
+    return fallback;
+  }
+
+  return override;
+}
+
 export interface AnalysisOptions {
   interviewType: string;  // Can be built-in types or custom admin-defined types
   cachedCriteria?: string;  // Pre-fetched interview criteria (from admin or web search)
   method?: AnalysisMethod;  // Which analysis method to use (default: agent-sdk)
+  model?: string;          // Optional model override (default: ANTHROPIC_MODEL env or claude-opus-5)
 }
 
 // Web search tool definition for Direct API method
@@ -187,21 +271,47 @@ export async function analyzeInterview(
 ): Promise<AsyncGenerator<AnalysisMessage>> {
   const prompt = buildAnalysisPrompt(transcript, options.interviewType, options.cachedCriteria);
 
-  // Create the agent query
+  // Create the agent query.
+  //
+  // SECURITY: the transcript is attacker-controlled - anyone who can reach the
+  // analyze endpoint supplies it, and it lands in the agent's prompt. Treat
+  // everything below as a containment boundary, not as tuning.
   const result = query({
     prompt,
     options: {
-      // SDK-only mode (no filesystem access)
+      model: getAnthropicModel(options.model),
+      includePartialMessages: true,
+      // Do not load settings files. NOTE: this does NOT sandbox the filesystem;
+      // tool restriction below is what actually prevents file and shell access.
       settingSources: [],
       // Increase max turns for more complex analysis
       maxTurns: 20,
-      // Bypass all permission checks - allow all tools
-      permissionMode: 'bypassPermissions',
-      // Enable debug logging and stderr capture
-      env: {
-        ...process.env,
-        DEBUG: '1'
-      },
+
+      // THE boundary: `tools` sets the base list of built-in tools that exist
+      // at all. `allowedTools` only auto-approves - on its own it restricts
+      // nothing - so the restriction has to be expressed here.
+      tools: AGENT_ALLOWED_TOOLS,
+      // Auto-approve the one tool we do expose, so the run needs no prompt.
+      allowedTools: AGENT_ALLOWED_TOOLS,
+      // Defense in depth: deny entries are enforced ahead of any allowance, so
+      // these stay blocked even if the base list above is ever widened.
+      disallowedTools: AGENT_DISALLOWED_TOOLS,
+
+      // No ambient MCP servers. An MCP tool is named mcp__server__tool and would
+      // not be matched by the built-in deny names above, so it has to be shut
+      // off at the source rather than denied by name.
+      mcpServers: {},
+      strictMcpConfig: true,
+
+      // Deny anything that unexpectedly asks for permission, rather than
+      // blanket-approving it. A server process cannot answer a prompt, and
+      // failing closed is the right default for untrusted input.
+      permissionMode: 'dontAsk',
+
+      // Pass an explicit allowlist rather than the whole server environment.
+      // process.env here holds the Anthropic key, the Brave key, the admin key
+      // and the Firebase service account JSON; the agent needs almost none of it.
+      env: buildAgentEnv(getAnthropicModel(options.model)),
       stderr: (data) => {
         console.error('[Claude CLI stderr]:', data.toString());
       }
@@ -211,6 +321,10 @@ export async function analyzeInterview(
   // Return an async generator that yields messages
   return (async function* () {
     let messageCount = 0;
+    let thinkingBuffer = '';
+    let lastThoughtYield = Date.now();
+    let textBuffer = '';
+    let lastTextYield = Date.now();
 
     for await (const message of result) {
       messageCount++;
@@ -244,7 +358,17 @@ export async function analyzeInterview(
 
         if (assistantMsg.content && Array.isArray(assistantMsg.content)) {
           for (const block of assistantMsg.content) {
-            if (block.type === 'text' && block.text) {
+            if (block.type === 'thinking' && (block as any).thinking) {
+              const thought = ((block as any).thinking as string).replace(/\s+/g, ' ').trim();
+              if (thought) {
+                yield {
+                  type: 'raw',
+                  content: `Thinking: ${thought.substring(0, 120)}...`,
+                  timestamp: new Date(),
+                  raw: { type: 'thinking_summary', preview: thought.substring(0, 200) }
+                };
+              }
+            } else if (block.type === 'text' && block.text) {
               // Send text content
               const text = block.text.trim();
               if (text) {
@@ -294,17 +418,60 @@ export async function analyzeInterview(
           raw: message
         };
       } else if (message.type === 'stream_event') {
-        // Stream events (partial updates)
+        // Stream events (partial live updates)
         const event = (message as any).event;
-        if (event?.type === 'content_block_delta' && event?.delta?.text) {
-          // We could accumulate these but they're often noisy
-          // For now, just note that streaming is happening
+        const delta = event?.delta;
+
+        if (event?.type === 'content_block_start' && event?.content_block?.type === 'thinking') {
           yield {
             type: 'raw',
-            content: `[Streaming...]`,
+            content: 'Thinking through interview evaluation...',
             timestamp: new Date(),
-            raw: { type: 'stream_delta', text: event.delta.text }
+            raw: event
           };
+        } else if (delta?.type === 'thinking_delta' && delta.thinking) {
+          thinkingBuffer += delta.thinking;
+          const now = Date.now();
+          // Emit thought snippets when a sentence ends or after 2.5s with sufficient content
+          if ((thinkingBuffer.length >= 60 && /[.!?\n]/.test(thinkingBuffer)) || (now - lastThoughtYield > 2500 && thinkingBuffer.length >= 40)) {
+            const clean = thinkingBuffer.replace(/\s+/g, ' ').trim();
+            if (clean.length > 0) {
+              yield {
+                type: 'raw',
+                content: `Thinking: ${clean.substring(0, 120)}`,
+                timestamp: new Date(),
+                raw: { type: 'thinking_delta', snippet: clean }
+              };
+            }
+            thinkingBuffer = '';
+            lastThoughtYield = now;
+          }
+        } else if (delta?.type === 'text_delta' && delta.text) {
+          textBuffer += delta.text;
+          const now = Date.now();
+          if (now - lastTextYield > 3000 || textBuffer.length > 150) {
+            const clean = textBuffer.replace(/\s+/g, ' ').trim();
+            if (clean.length > 0) {
+              yield {
+                type: 'raw',
+                content: `Writing evaluation: ${clean.slice(-90)}...`,
+                timestamp: new Date(),
+                raw: { type: 'text_progress', length: textBuffer.length }
+              };
+            }
+            lastTextYield = now;
+          }
+        } else if (event?.type === 'content_block_stop') {
+          if (thinkingBuffer.trim().length > 0) {
+            const clean = thinkingBuffer.replace(/\s+/g, ' ').trim();
+            yield {
+              type: 'raw',
+              content: `Thinking: ${clean.substring(0, 120)}`,
+              timestamp: new Date(),
+              raw: { type: 'thinking_delta', snippet: clean }
+            };
+            thinkingBuffer = '';
+          }
         }
       }
     }
@@ -377,12 +544,56 @@ Be direct, specific, and constructive.`;
           timestamp: new Date()
         };
 
-        const response = await getAnthropicClient().messages.create({
-          model: 'claude-opus-4-5-20251101',
-          max_tokens: 8000,
+        const model = getAnthropicModel(options.model);
+        const stream = getAnthropicClient().messages.stream({
+          model,
+          // Thinking is on by default on Opus 5 and max_tokens caps thinking + text
+          // together, so this needs far more headroom than the old no-thinking 8000.
+          max_tokens: 32000,
+          // display: 'summarized' is required for the thinking_delta events below.
+          // The API default is 'omitted', which streams empty thinking blocks and
+          // would silently kill the live "Thinking:" feed in the UI.
+          thinking: { type: 'adaptive', display: 'summarized' },
           tools: cachedCriteria ? undefined : [webSearchTool], // Only provide tool if no cache
           messages
         });
+
+        let directThinking = '';
+        let lastDirectYield = Date.now();
+
+        for await (const event of stream) {
+          if (event.type === 'content_block_delta') {
+            const delta = (event as any).delta;
+            if (delta?.type === 'thinking_delta' && delta.thinking) {
+              directThinking += delta.thinking;
+              const now = Date.now();
+              if ((directThinking.length >= 60 && /[.!?\n]/.test(directThinking)) || (now - lastDirectYield > 2500 && directThinking.length >= 40)) {
+                const clean = directThinking.replace(/\s+/g, ' ').trim();
+                if (clean.length > 0) {
+                  yield {
+                    type: 'raw',
+                    content: `Thinking: ${clean.substring(0, 120)}`,
+                    timestamp: new Date()
+                  };
+                }
+                directThinking = '';
+                lastDirectYield = now;
+              }
+            } else if (delta?.type === 'text_delta' && delta.text) {
+              const now = Date.now();
+              if (now - lastDirectYield > 3000) {
+                yield {
+                  type: 'raw',
+                  content: 'Writing evaluation analysis...',
+                  timestamp: new Date()
+                };
+                lastDirectYield = now;
+              }
+            }
+          }
+        }
+
+        const response = await stream.finalMessage();
 
         // Check if done
         if (response.stop_reason === 'end_turn') {

@@ -36,7 +36,7 @@ Interview Analyzer is a web application that analyzes interview transcripts usin
 | Frontend | React 19 + TypeScript, Vite |
 | Routing | React Router v7 |
 | Backend | Node.js + Express + TypeScript |
-| AI | Anthropic Claude (claude-opus-4-5) |
+| AI | Anthropic Claude (claude-opus-5) |
 | Database | Firebase Firestore |
 | Authentication | Firebase Auth (Google OAuth) |
 | Email | Gmail API via Cloud Functions |

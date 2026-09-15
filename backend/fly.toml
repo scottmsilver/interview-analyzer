@@ -11,9 +11,16 @@ primary_region = "sjc"
   min_machines_running = 0
   processes = ["app"]
 
+  [http_service.http_options]
+    idle_timeout = 300
+
 [env]
   PORT = "8080"
   NODE_ENV = "production"
+  # ANTHROPIC_MODEL is intentionally NOT set here.
+  # It is a Fly secret, and secrets override [env]. Keeping a copy in this file
+  # would silently drift from the value production actually uses.
+  # Change it with: fly secrets set ANTHROPIC_MODEL=<id> -a interview-analyzer-api
 
 [[vm]]
   memory = "512mb"

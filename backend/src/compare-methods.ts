@@ -22,6 +22,10 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const anthropic = new Anthropic();
+const MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-5';
+
+// Effort replaces the old thinking-token budget as the depth dial.
+type ThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 // Web search tool definition for Anthropic API
 const webSearchTool: Anthropic.Tool = {
@@ -182,24 +186,28 @@ Use markdown formatting.`;
   };
 }
 
-// Method 2: Direct Claude API with extended thinking (using streaming for long operations)
-async function runDirectAPI(transcript: string, interviewType: string, thinkingBudget: number = 10000): Promise<ComparisonResult> {
-  console.log(`\n🧠 Running Direct API with ${thinkingBudget} thinking tokens...`);
+// Method 2: Direct Claude API with adaptive thinking (using streaming for long operations)
+//
+// Thinking depth is controlled by `output_config.effort`, not a token budget.
+// `thinking.budget_tokens` was removed on Opus 5 and returns a 400.
+async function runDirectAPI(transcript: string, interviewType: string, effort: ThinkingEffort = 'high'): Promise<ComparisonResult> {
+  console.log(`\n🧠 Running Direct API at effort=${effort}...`);
   const startTime = Date.now();
 
   const prompt = buildPrompt(transcript, interviewType);
 
-  // max_tokens must be greater than thinking budget
-  const maxTokens = Math.max(thinkingBudget + 8000, 20000);
+  // Adaptive thinking needs room; max_tokens caps thinking + text together.
+  // Safe to set high here because this call streams.
+  const maxTokens = 64000;
 
   // Use streaming to handle long-running operations
   const stream = anthropic.messages.stream({
-    model: 'claude-opus-4-5-20251101',
+    model: MODEL,
     max_tokens: maxTokens,
-    thinking: {
-      type: 'enabled',
-      budget_tokens: thinkingBudget
-    },
+    // 'summarized' so the thinking blocks below carry text; the API default
+    // ('omitted') returns empty thinking blocks.
+    thinking: { type: 'adaptive', display: 'summarized' },
+    output_config: { effort },
     messages: [
       {
         role: 'user',
@@ -226,7 +234,7 @@ async function runDirectAPI(transcript: string, interviewType: string, thinkingB
   }
 
   return {
-    method: `Direct API (thinking: ${thinkingBudget})`,
+    method: `Direct API (effort: ${effort})`,
     duration,
     inputTokens: response.usage.input_tokens,
     outputTokens: response.usage.output_tokens,
@@ -236,16 +244,23 @@ async function runDirectAPI(transcript: string, interviewType: string, thinkingB
   };
 }
 
-// Method 3: Direct Claude API without extended thinking (baseline)
-async function runDirectAPINoThinking(transcript: string, interviewType: string): Promise<ComparisonResult> {
-  console.log('\n📝 Running Direct API without extended thinking...');
+// Method 3: Direct Claude API at the cheapest thinking setting (baseline)
+//
+// This was a thinking-disabled baseline. On Opus 5 thinking is on by default and
+// explicitly disabling it can leak internal XML tags into the visible answer,
+// which would corrupt the text this harness compares. Low effort is the
+// recommended cheap/fast arm instead.
+async function runDirectAPILowEffort(transcript: string, interviewType: string): Promise<ComparisonResult> {
+  console.log('\n📝 Running Direct API at effort=low...');
   const startTime = Date.now();
 
   const prompt = buildPrompt(transcript, interviewType);
 
   const response = await anthropic.messages.create({
-    model: 'claude-opus-4-5-20251101',
-    max_tokens: 8000,
+    model: MODEL,
+    // Non-streaming, so keep max_tokens under the SDK HTTP timeout envelope.
+    max_tokens: 16000,
+    output_config: { effort: 'low' },
     messages: [
       {
         role: 'user',
@@ -264,7 +279,7 @@ async function runDirectAPINoThinking(transcript: string, interviewType: string)
   }
 
   return {
-    method: 'Direct API (no thinking)',
+    method: 'Direct API (effort: low)',
     duration,
     inputTokens: response.usage.input_tokens,
     outputTokens: response.usage.output_tokens,
@@ -310,8 +325,9 @@ Use markdown formatting.`;
   // Tool use loop - continues until model stops using tools
   while (true) {
     const response = await anthropic.messages.create({
-      model: 'claude-opus-4-5-20251101',
-      max_tokens: 8000,
+      model: MODEL,
+      // Thinking is on by default on Opus 5 and shares this cap with the text.
+      max_tokens: 16000,
       tools: [webSearchTool],
       messages
     });
@@ -399,24 +415,24 @@ async function compare(transcriptPath: string, interviewType: string = 'google-a
 
   // Run all methods
   try {
-    // 1. Direct API without thinking (fastest baseline)
-    results.push(await runDirectAPINoThinking(transcript, interviewType));
+    // 1. Direct API at low effort (fastest baseline)
+    results.push(await runDirectAPILowEffort(transcript, interviewType));
   } catch (e) {
-    console.error('Direct API (no thinking) failed:', e);
+    console.error('Direct API (effort: low) failed:', e);
   }
 
   try {
-    // 2. Direct API with medium thinking budget
-    results.push(await runDirectAPI(transcript, interviewType, 5000));
+    // 2. Direct API at medium effort
+    results.push(await runDirectAPI(transcript, interviewType, 'medium'));
   } catch (e) {
-    console.error('Direct API (5k thinking) failed:', e);
+    console.error('Direct API (effort: medium) failed:', e);
   }
 
   try {
-    // 3. Direct API with high thinking budget
-    results.push(await runDirectAPI(transcript, interviewType, 16000));
+    // 3. Direct API at xhigh effort
+    results.push(await runDirectAPI(transcript, interviewType, 'xhigh'));
   } catch (e) {
-    console.error('Direct API (16k thinking) failed:', e);
+    console.error('Direct API (effort: xhigh) failed:', e);
   }
 
   try {
