@@ -209,9 +209,6 @@ function MainContent() {
   const [statusMessage, setStatusMessage] = useState('')
   const [agentLogs, setAgentLogs] = useState<{content: string, raw: any, at: number}[]>([])
   const [showLogs, setShowLogs] = useState(false)
-  const [showDebug, setShowDebug] = useState(false)
-  const [isReplaying, setIsReplaying] = useState(false)
-  const [replayIndex, setReplayIndex] = useState(0)
   const [autoSaved, setAutoSaved] = useState(false)
   const [savedAnalysisId, setSavedAnalysisId] = useState<string | null>(null)
   const [showPasteDialog, setShowPasteDialog] = useState(false)
@@ -311,25 +308,6 @@ function MainContent() {
     }
   }, [connectionStatus, waitingStartTime])
 
-  // Replay animation effect
-  useEffect(() => {
-    if (isReplaying && replayIndex < agentLogs.length) {
-      const timer = setTimeout(() => {
-        setReplayIndex(replayIndex + 1)
-      }, 400) // 400ms between messages
-      return () => clearTimeout(timer)
-    } else if (isReplaying && replayIndex >= agentLogs.length) {
-      setIsReplaying(false)
-    }
-  }, [isReplaying, replayIndex, agentLogs.length])
-
-  // Keep replay index in sync with logs when not replaying
-  useEffect(() => {
-    if (!isReplaying) {
-      setReplayIndex(agentLogs.length)
-    }
-  }, [agentLogs.length, isReplaying])
-
   // Close method dropdown when clicking outside
   useEffect(() => {
     if (!showMethodDropdown) return
@@ -342,11 +320,6 @@ function MainContent() {
     document.addEventListener('click', handleClickOutside)
     return () => document.removeEventListener('click', handleClickOutside)
   }, [showMethodDropdown])
-
-  const startReplay = () => {
-    setReplayIndex(0)
-    setIsReplaying(true)
-  }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0]
@@ -786,95 +759,7 @@ function MainContent() {
             </div>
             {showLogs && (
               <div className="flyout-content">
-                {/* Live Conversation - two robots with thought balloons */}
-                <div className="robot-scene">
-                  {/* Replay button */}
-                  {!analyzing && agentLogs.length > 0 && (
-                    <button
-                      onClick={startReplay}
-                      className="replay-button"
-                      disabled={isReplaying}
-                      title="Replay animation"
-                    >
-                      {isReplaying ? '⏸' : '▶'} Replay
-                    </button>
-                  )}
-
-                  {/* Agent Robot (left) */}
-                  <div className="robot-character robot-character-agent">
-                    {(() => {
-                      const logsToShow = isReplaying ? agentLogs.slice(0, replayIndex) : agentLogs
-                      const lastAgentMsg = [...logsToShow].reverse().find(log => {
-                        const content = log.content.toLowerCase()
-                        return !content.includes('system') && !content.includes('sdk') &&
-                               !content.includes('tool') && !content.includes('executing')
-                      })
-                      const agentText = lastAgentMsg ?
-                        (lastAgentMsg.content.startsWith('[') ?
-                          lastAgentMsg.content.match(/\](.*)/)?.[1]?.trim() || 'Thinking...' :
-                          lastAgentMsg.content.substring(0, 80) + (lastAgentMsg.content.length > 80 ? '...' : '')) :
-                        'Ready...'
-
-                      return (
-                        <>
-                          {lastAgentMsg && (
-                            <div className="thought-balloon thought-balloon-left" key={logsToShow.indexOf(lastAgentMsg)}>
-                              {agentText}
-                            </div>
-                          )}
-                          <div className="robot-body">🤖</div>
-                          <div className="robot-label">Agent</div>
-                        </>
-                      )
-                    })()}
-                  </div>
-
-                  {/* System Robot (right) */}
-                  <div className="robot-character robot-character-system">
-                    {(() => {
-                      const logsToShow = isReplaying ? agentLogs.slice(0, replayIndex) : agentLogs
-                      const lastSystemMsg = [...logsToShow].reverse().find(log => {
-                        const content = log.content.toLowerCase()
-                        return content.includes('system') || content.includes('sdk') ||
-                               content.includes('tool') || content.includes('executing')
-                      })
-                      const systemText = lastSystemMsg ?
-                        (lastSystemMsg.content.startsWith('[') ?
-                          lastSystemMsg.content.match(/\](.*)/)?.[1]?.trim() || 'Processing...' :
-                          lastSystemMsg.content.substring(0, 80) + (lastSystemMsg.content.length > 80 ? '...' : '')) :
-                        'Ready...'
-
-                      return (
-                        <>
-                          {lastSystemMsg && (
-                            <div className="thought-balloon thought-balloon-right" key={logsToShow.indexOf(lastSystemMsg)}>
-                              {systemText}
-                            </div>
-                          )}
-                          <div className="robot-body">⚙️</div>
-                          <div className="robot-label">System</div>
-                        </>
-                      )
-                    })()}
-                  </div>
-                </div>
-
-                {/* Debug Toggle */}
-                <div className="debug-toggle-section">
-                  <button
-                    onClick={() => setShowDebug(!showDebug)}
-                    className="debug-toggle-button"
-                  >
-                    {showDebug ? '▼' : '▶'} Activity log ({agentLogs.length})
-                  </button>
-                </div>
-
-                {/* Debug Section - all logs */}
-                {showDebug && (
-                  <div className="debug-logs">
-                    <ActivityLog entries={agentLogs} startedAt={analysisStartTime} />
-                  </div>
-                )}
+                <ActivityLog entries={agentLogs} startedAt={analysisStartTime} />
               </div>
             )}
           </div>

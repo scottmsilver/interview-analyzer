@@ -244,7 +244,10 @@ body {
   position: fixed;
   right: 1rem;
   bottom: 1rem;
-  width: 400px;
+  /* Wider than the old 400px: the content is now a three-column log table,
+     which wrapped every message to two or three lines at the old width. */
+  width: 560px;
+  max-width: calc(100vw - 2rem);
   max-height: 60vh;
   background: white;
   border-radius: 12px;
@@ -381,61 +384,11 @@ body {
 }
 
 /* Robot Scene - Game-like view */
-.robot-scene {
-  padding: 1.5rem 1rem;
-  min-height: 180px;
-  display: flex;
-  justify-content: space-around;
-  align-items: flex-end;
-  background: linear-gradient(180deg, #e8f4f8 0%, #f0f4f8 100%);
-  border-radius: 8px;
-  margin-bottom: 0.5rem;
-  position: relative;
-}
 
-.replay-button {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  background: white;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  padding: 0.4rem 0.75rem;
-  font-size: 0.75rem;
-  cursor: pointer;
-  color: #4285f4;
-  font-weight: 500;
-  transition: all 0.2s;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-  z-index: 10;
-}
 
-.replay-button:hover:not(:disabled) {
-  background: #4285f4;
-  color: white;
-  border-color: #4285f4;
-  box-shadow: 0 3px 6px rgba(66,133,244,0.3);
-}
 
-.replay-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
 
-.robot-character {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  position: relative;
-  flex: 1;
-  max-width: 45%;
-}
 
-.robot-body {
-  font-size: 3rem;
-  margin-bottom: 0.25rem;
-  animation: robotIdle 3s ease-in-out infinite;
-}
 
 @keyframes robotIdle {
   0%, 100% {
@@ -446,88 +399,16 @@ body {
   }
 }
 
-.robot-label {
-  font-size: 0.7rem;
-  color: #666;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
 
-.thought-balloon {
-  position: absolute;
-  bottom: 100%;
-  margin-bottom: 0.5rem;
-  background: white;
-  border-radius: 12px;
-  padding: 0.75rem 1rem;
-  max-width: 160px;
-  font-size: 0.75rem;
-  line-height: 1.4;
-  color: #333;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-  animation: balloonPop 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-  word-wrap: break-word;
-}
 
-@keyframes balloonPop {
-  0% {
-    opacity: 0;
-    transform: scale(0.5) translateY(10px);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-}
 
-.thought-balloon::after {
-  content: '';
-  position: absolute;
-  bottom: -8px;
-  width: 12px;
-  height: 12px;
-  background: white;
-  border-radius: 50%;
-}
 
-.thought-balloon::before {
-  content: '';
-  position: absolute;
-  bottom: -16px;
-  width: 6px;
-  height: 6px;
-  background: white;
-  border-radius: 50%;
-}
 
-.thought-balloon-left {
-  left: 50%;
-  transform: translateX(-50%);
-  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
-}
 
-.thought-balloon-left::after {
-  left: 20%;
-}
 
-.thought-balloon-left::before {
-  left: 10%;
-}
 
-.thought-balloon-right {
-  right: 50%;
-  transform: translateX(50%);
-  background: linear-gradient(135deg, #f3e5f5 0%, #e1bee7 100%);
-}
 
-.thought-balloon-right::after {
-  right: 20%;
-}
 
-.thought-balloon-right::before {
-  right: 10%;
-}
 
 .conversation-bubble {
   display: flex;
@@ -607,28 +488,8 @@ body {
 }
 
 /* Debug Toggle Section */
-.debug-toggle-section {
-  padding: 0 0.75rem;
-  border-top: 1px solid #e0e0e0;
-  padding-top: 0.5rem;
-}
 
-.debug-toggle-button {
-  background: transparent;
-  border: none;
-  color: #666;
-  font-size: 0.75rem;
-  cursor: pointer;
-  padding: 0.5rem;
-  width: 100%;
-  text-align: left;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  transition: color 0.2s;
-}
 
-.debug-toggle-button:hover {
-  color: #333;
-}
 
 /* Debug Logs */
 .debug-logs {

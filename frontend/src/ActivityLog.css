@@ -104,8 +104,13 @@
 .activity-log .log-kind-error    { color: var(--error, #c77a4b); }
 
 /* The admin table sets pre-wrap for plain text; these cells hold rendered
-   markdown, so normal wrapping applies instead. */
-.activity-log .log-message {
+   markdown, so normal wrapping applies instead.
+   The surrounding .flyout-content sets a monospace face for the old raw-text
+   view; message prose reads as text, so it takes the body stack back. Times,
+   kind chips and inline code stay monospace. */
+.activity-log .log-message,
+.activity-log .log-markdown {
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   color: var(--text-secondary);
   line-height: 1.45;
   white-space: normal;
