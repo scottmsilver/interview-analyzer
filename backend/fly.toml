@@ -17,6 +17,11 @@ primary_region = "sjc"
 [env]
   PORT = "8080"
   NODE_ENV = "production"
+  # Browser origins allowed to call this API. The frontend is served from
+  # Firebase Hosting, which serves the same site on both domains below.
+  # Not a secret, so it lives here in version control rather than in fly secrets.
+  ALLOWED_ORIGINS = "https://interview-analyzer-prod.web.app,https://interview-analyzer-prod.firebaseapp.com"
+
   # ANTHROPIC_MODEL is intentionally NOT set here.
   # It is a Fly secret, and secrets override [env]. Keeping a copy in this file
   # would silently drift from the value production actually uses.
