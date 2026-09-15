@@ -17,10 +17,14 @@ primary_region = "sjc"
 [env]
   PORT = "8080"
   NODE_ENV = "production"
-  # Browser origins allowed to call this API. The frontend is served from
-  # Firebase Hosting, which serves the same site on both domains below.
+  # Browser origins allowed to call this API.
+  #
+  # Setting this REPLACES the default list in server.ts - it does not add to it.
+  # The primary frontend is interview-analyzer-web.fly.dev; the Firebase Hosting
+  # domains and the localhost dev ports must stay listed here too, or requests
+  # from them fail CORS with no Access-Control-Allow-Origin header.
   # Not a secret, so it lives here in version control rather than in fly secrets.
-  ALLOWED_ORIGINS = "https://interview-analyzer-prod.web.app,https://interview-analyzer-prod.firebaseapp.com"
+  ALLOWED_ORIGINS = "https://interview-analyzer-web.fly.dev,https://interview-analyzer-prod.web.app,https://interview-analyzer-prod.firebaseapp.com,http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176"
 
   # ANTHROPIC_MODEL is intentionally NOT set here.
   # It is a Fly secret, and secrets override [env]. Keeping a copy in this file
