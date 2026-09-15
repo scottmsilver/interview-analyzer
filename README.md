@@ -250,3 +250,32 @@ This project is licensed under the MIT License - see the [LICENSE](./LICENSE) fi
 **Made with care for people preparing for interviews**
 
 Last Updated: March 2026
+
+## Deploying
+
+The frontend and backend deploy separately.
+
+**Backend** goes to Fly: `cd backend && fly deploy -a interview-analyzer-api`.
+`ANTHROPIC_MODEL` is a Fly *secret* and overrides anything in `fly.toml`, so
+change it with `fly secrets set`, not by editing the file.
+
+**Frontend** goes to Firebase Hosting: `npm run build` in `frontend/`, then
+`firebase deploy --only hosting`.
+
+Before building the frontend, create `frontend/.env.production` with:
+
+```
+VITE_API_URL=https://interview-analyzer-api.fly.dev
+```
+
+That file is gitignored, so it does not exist in a fresh clone. Without it the
+build falls back to `http://localhost:9002` and the deployed site cannot reach
+the API. Check the bundle before shipping:
+
+```
+grep -o 'interview-analyzer-api\.fly\.dev\|localhost:9002' frontend/dist/assets/*.js
+```
+
+Browser origins allowed to call the API are set by `ALLOWED_ORIGINS` in
+`backend/fly.toml`. A new frontend domain has to be added there or its requests
+fail CORS.
