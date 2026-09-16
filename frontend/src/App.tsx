@@ -701,13 +701,13 @@ function MainContent() {
                 })()}
               </div>
               {agentLogs.length > 0 && (
+                /* The steady phase, never raw log text. This previously showed
+                   the last message truncated to 80 characters, which meant a
+                   sliding window of the model's own prose scrolled under the
+                   progress bar for the whole run. Detail belongs in the
+                   activity log. */
                 <div className="latest-activity">
-                  {(() => {
-                    const lastLog = agentLogs[agentLogs.length - 1]
-                    const content = lastLog?.content || ''
-                    const cleaned = content.replace(/^\[.*?\]/, '').trim()
-                    return cleaned.length > 80 ? cleaned.substring(0, 80) + '...' : cleaned || 'Processing...'
-                  })()}
+                  {statusMessage || 'Starting analysis'}
                 </div>
               )}
             </div>

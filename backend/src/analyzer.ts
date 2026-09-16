@@ -83,6 +83,48 @@ export function buildAgentEnv(model: string): Record<string, string> {
   return env;
 }
 
+/**
+ * Pull complete sentences out of a streaming reasoning buffer.
+ *
+ * Reasoning arrives as a continuous token stream, so any boundary based on a
+ * timer or a fixed character count lands mid-word. Three separate call sites
+ * had each grown their own copy of that bug, producing log lines like
+ * "Thinking: ief with no timestamps present". The boundary has to come from
+ * the text.
+ *
+ * Returns the text ready to emit and whatever is still incomplete. With
+ * `force`, the remainder is flushed as-is, for end-of-stream.
+ */
+export function takeSentences(buffer: string, force = false): { emit: string; rest: string } {
+  if (force) return { emit: buffer, rest: '' };
+
+  const sentences = buffer.match(/[^.!?\n]+[.!?\n]+/g);
+  if (sentences) {
+    const consumed = sentences.join('');
+    // Hold very short fragments back so they merge with what follows. After the
+    // safety valve below cuts at a word boundary, the tail can complete into a
+    // stub like "d." that is noise on its own line.
+    if (consumed.trim().length < 25) return { emit: '', rest: buffer };
+    return { emit: consumed, rest: buffer.slice(consumed.length) };
+  }
+  // Safety valve: a very long stretch with no sentence ending still gets
+  // reported rather than sitting invisible in the buffer. Cut at a word
+  // boundary and mark it, so the reader can see the line is a continuation
+  // rather than a mangled sentence.
+  if (buffer.length > 600) {
+    const cut = buffer.lastIndexOf(' ');
+    if (cut > 0) return { emit: buffer.slice(0, cut) + '…', rest: '…' + buffer.slice(cut + 1) };
+  }
+  return { emit: '', rest: buffer };
+}
+
+/** Trim a complete thought for display without cutting a word in half. */
+export function clipAtWord(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.lastIndexOf(' ', max);
+  return text.slice(0, cut > 0 ? cut : max).trimEnd() + '...';
+}
+
 export function getAnthropicModel(override?: string): string {
   const fallback = process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL;
 
@@ -363,9 +405,9 @@ export async function analyzeInterview(
               if (thought) {
                 yield {
                   type: 'raw',
-                  content: `Thinking: ${thought.substring(0, 120)}...`,
+                  content: `Thinking: ${clipAtWord(thought, 200)}`,
                   timestamp: new Date(),
-                  raw: { type: 'thinking_summary', preview: thought.substring(0, 200) }
+                  raw: { type: 'thinking_summary', preview: clipAtWord(thought, 400) }
                 };
               }
             } else if (block.type === 'text' && block.text) {
@@ -432,18 +474,23 @@ export async function analyzeInterview(
         } else if (delta?.type === 'thinking_delta' && delta.thinking) {
           thinkingBuffer += delta.thinking;
           const now = Date.now();
-          // Emit thought snippets when a sentence ends or after 2.5s with sufficient content
-          if ((thinkingBuffer.length >= 60 && /[.!?\n]/.test(thinkingBuffer)) || (now - lastThoughtYield > 2500 && thinkingBuffer.length >= 40)) {
-            const clean = thinkingBuffer.replace(/\s+/g, ' ').trim();
-            if (clean.length > 0) {
-              yield {
-                type: 'raw',
-                content: `Thinking: ${clean.substring(0, 120)}`,
-                timestamp: new Date(),
-                raw: { type: 'thinking_delta', snippet: clean }
-              };
-            }
-            thinkingBuffer = '';
+
+          // Emit complete sentences only, and keep the remainder buffered.
+          //
+          // This previously flushed on a 2.5s timer and then truncated to 120
+          // characters, so entries started and ended mid-word and whatever was
+          // cut off was silently dropped. Reasoning arrives as a continuous
+          // stream, so the boundary has to come from the text, not a clock.
+          const { emit, rest } = takeSentences(thinkingBuffer);
+          thinkingBuffer = rest;
+          const clean = emit.replace(/\s+/g, ' ').trim();
+          if (clean.length > 0) {
+            yield {
+              type: 'raw',
+              content: `Thinking: ${clean}`,
+              timestamp: new Date(),
+              raw: { type: 'thinking_delta', snippet: clean }
+            };
             lastThoughtYield = now;
           }
         } else if (delta?.type === 'text_delta' && delta.text) {
@@ -452,9 +499,14 @@ export async function analyzeInterview(
           if (now - lastTextYield > 3000 || textBuffer.length > 150) {
             const clean = textBuffer.replace(/\s+/g, ' ').trim();
             if (clean.length > 0) {
+              // Report that writing is happening, not what is being written.
+              // This used to carry the trailing 90 characters of the evaluation,
+              // so the UI showed a sliding window of mid-sentence prose. The
+              // finished text is delivered as the result; progress only needs
+              // to say the model is producing it.
               yield {
                 type: 'raw',
-                content: `Writing evaluation: ${clean.slice(-90)}...`,
+                content: `Writing evaluation (${clean.length} characters so far)`,
                 timestamp: new Date(),
                 raw: { type: 'text_progress', length: textBuffer.length }
               };
@@ -463,13 +515,16 @@ export async function analyzeInterview(
           }
         } else if (event?.type === 'content_block_stop') {
           if (thinkingBuffer.trim().length > 0) {
-            const clean = thinkingBuffer.replace(/\s+/g, ' ').trim();
-            yield {
-              type: 'raw',
-              content: `Thinking: ${clean.substring(0, 120)}`,
-              timestamp: new Date(),
-              raw: { type: 'thinking_delta', snippet: clean }
-            };
+            const { emit } = takeSentences(thinkingBuffer, true);
+            const clean = emit.replace(/\s+/g, ' ').trim();
+            if (clean.length > 0) {
+              yield {
+                type: 'raw',
+                content: `Thinking: ${clean}`,
+                timestamp: new Date(),
+                raw: { type: 'thinking_delta', snippet: clean }
+              };
+            }
             thinkingBuffer = '';
           }
         }
@@ -567,16 +622,16 @@ Be direct, specific, and constructive.`;
             if (delta?.type === 'thinking_delta' && delta.thinking) {
               directThinking += delta.thinking;
               const now = Date.now();
-              if ((directThinking.length >= 60 && /[.!?\n]/.test(directThinking)) || (now - lastDirectYield > 2500 && directThinking.length >= 40)) {
-                const clean = directThinking.replace(/\s+/g, ' ').trim();
-                if (clean.length > 0) {
-                  yield {
-                    type: 'raw',
-                    content: `Thinking: ${clean.substring(0, 120)}`,
-                    timestamp: new Date()
-                  };
-                }
-                directThinking = '';
+              const { emit, rest } = takeSentences(directThinking);
+              directThinking = rest;
+              const clean = emit.replace(/\s+/g, ' ').trim();
+              if (clean.length > 0) {
+                yield {
+                  type: 'raw',
+                  content: `Thinking: ${clean}`,
+                  timestamp: new Date(),
+                  raw: { type: 'thinking_delta', snippet: clean }
+                };
                 lastDirectYield = now;
               }
             } else if (delta?.type === 'text_delta' && delta.text) {
