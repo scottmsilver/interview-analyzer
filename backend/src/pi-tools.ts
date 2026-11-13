@@ -181,15 +181,98 @@ export function formatSecAsHms(sec: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function classifySpeakerRole(speaker: string): SpeakerRole {
+export function classifySpeakerRole(speaker: string): SpeakerRole {
   const s = speaker.trim().toLowerCase();
-  if (/^(?:interviewer|host|recruiter|hiring manager|panelist|moderator|q)\b/.test(s)) {
+  if (/^(?:interviewer(?:\s*\d*)?|host|recruiter|hiring manager|panelist|moderator|q|i\d+)\b/.test(s)) {
     return 'interviewer';
   }
-  if (/^(?:candidate|interviewee|applicant|a)\b/.test(s)) {
+  if (/^(?:candidate(?:\s*\d*)?|interviewee|applicant|a|c\d+)\b/.test(s)) {
     return 'candidate';
   }
   return 'other';
+}
+
+const METADATA_HEADER_KEY_RE =
+  /^(?:(?:program|date|interview\s+date|interviewers|duration|location|role|position|overall\s+score|title|summary|scorecard|topic|subject|attendees?|participants?|meeting|session|company|recording|transcript)\b|interviewer\(s\))/i;
+
+const PROSE_COLON_PREFIX_RE =
+  /^(?:note|notes|first|second|third|example|e\.?g|step|steps|option|options|metric|metrics|question|questions|answer|answers|strength|strengths|weakness|weaknesses|verdict|before|after|instead\s+of|takeaway|takeaways|key\s+takeaways?)\b/i;
+
+function normalizeSpeakerPrefixLine(line: string): { normalized: string; hadEmphasis: boolean } {
+  // "**Speaker:** text", "*Speaker:* text", "__Speaker:__ text"
+  let m = line.match(/^(\*{1,3}|_{1,2})([^*\n_]{1,50}?):\1\s*(.*)$/);
+  if (m) {
+    return { normalized: `${m[2].trim()}: ${m[3]}`, hadEmphasis: true };
+  }
+  // "**Speaker**: text", "*Speaker*: text", "__Speaker__: text"
+  m = line.match(/^(\*{1,3}|_{1,2})([^*\n_]{1,50}?)\1\s*:\s*(.*)$/);
+  if (m) {
+    return { normalized: `${m[2].trim()}: ${m[3]}`, hadEmphasis: true };
+  }
+  return { normalized: line, hadEmphasis: false };
+}
+
+function isCandidateMetadataHeader(
+  speaker: string,
+  value: string,
+  isAtTop: boolean,
+  hadEmphasis: boolean,
+): boolean {
+  if (speaker.trim().toLowerCase() !== 'candidate') return false;
+  if (!isAtTop && !hadEmphasis) return false;
+  const trimmedVal = value.trim();
+  const words = countWords(trimmedVal);
+  if (words === 0 || words > 5) return false;
+  if (/[?!]$/.test(trimmedVal)) return false;
+  if (!hadEmphasis && /\.$/.test(trimmedVal)) return false;
+  if (
+    /\b(?:hi|hello|hey|yes|yeah|sure|thanks|thank you|ready|great|good|let's|i|i'm|i'd|we)\b/i.test(
+      trimmedVal,
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isTopHeaderNoise(line: string): boolean {
+  const { normalized, hadEmphasis } = normalizeSpeakerPrefixLine(line);
+  const kv = normalized.match(/^([A-Za-z][A-Za-z0-9 ._()/-]{0,40}?)\s*:\s*(?!\/\/)(.*)$/);
+  if (kv) {
+    const key = kv[1].trim();
+    const val = kv[2] ?? '';
+    if (METADATA_HEADER_KEY_RE.test(key) || isCandidateMetadataHeader(key, val, true, hadEmphasis)) {
+      return true;
+    }
+  }
+  if (countWords(line) <= 12) {
+    const stripped = line.replace(/[*_]/g, '').trim();
+    if (
+      /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{2,4}\b/i.test(stripped) ||
+      /^\d{4}[-/]\d{1,2}[-/]\d{1,2}\b/.test(stripped) ||
+      /^\d{1,2}\/\d{1,2}\/\d{2,4}\b/.test(stripped) ||
+      /\b\d{1,2}:\d{2}\s*(?:AM|PM|PST|PDT|EST|EDT|CST|CDT|MST|MDT|UTC|GMT)\b/i.test(stripped) ||
+      /^(?:google\s+meet\s+transcript|otter\.ai\s+transcript|meeting\s+transcript|interview\s+transcript|transcript|notes\s+by\s+gemini|attendees?|participants?)\b/i.test(
+        stripped,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isSpeakerMetadataGuard(
+  candidateSpeaker: string,
+  textAfterColon: string,
+  isAtTop: boolean,
+  hadEmphasis: boolean,
+): boolean {
+  return (
+    METADATA_HEADER_KEY_RE.test(candidateSpeaker) ||
+    PROSE_COLON_PREFIX_RE.test(candidateSpeaker) ||
+    isCandidateMetadataHeader(candidateSpeaker, textAfterColon, isAtTop, hadEmphasis)
+  );
 }
 
 export function parseTranscript(transcript: string): ParsedTranscript {
@@ -197,6 +280,8 @@ export function parseTranscript(transcript: string): ParsedTranscript {
   const turns: TranscriptTurn[] = [];
   let detectedFormat: TimestampFormat = 'none';
   let pendingVttTimestamp: { raw: string; sec: number } | null = null;
+  let activeSectionTimestamp: { raw: string; sec: number } | null = null;
+  const footerTimestampSecs: number[] = [];
   let currentTurn: Omit<TranscriptTurn, 'wordCount'> | null = null;
 
   const pushCurrent = () => {
@@ -219,13 +304,29 @@ export function parseTranscript(transcript: string): ParsedTranscript {
   };
 
   // Patterns ordered from most specific to most general
-  const bracketRe = /^\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*([A-Za-z][A-Za-z0-9 ._-]{0,40}?)\s*:\s*(.*)$/;
-  const parenRe = /^\((\d{1,2}:\d{2}(?::\d{2})?)\)\s*([A-Za-z][A-Za-z0-9 ._-]{0,40}?)\s*:\s*(.*)$/;
-  const dashRe = /^(\d{1,2}:\d{2}(?::\d{2})?)\s*-\s*([A-Za-z][A-Za-z0-9 ._-]{0,40}?)\s*:\s*(.*)$/;
-  const plainTsSpeakerRe = /^(\d{1,2}:\d{2}(?::\d{2})?)\s+([A-Za-z][A-Za-z0-9 ._-]{0,40}?)\s*:\s*(.*)$/;
-  const otterRe = /^([A-Za-z][A-Za-z0-9 ._-]{0,40}?)\s{1,4}(\d{1,2}:\d{2}(?::\d{2})?)\s*$/;
+  const timestampedPatterns: Array<{ re: RegExp; fmt: (ts: string) => TimestampFormat }> = [
+    {
+      re: /^\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*(.+)$/,
+      fmt: (ts) => (ts.split(':').length === 3 ? 'bracket-hms' : 'bracket-ms'),
+    },
+    {
+      re: /^\((\d{1,2}:\d{2}(?::\d{2})?)\)\s*(.+)$/,
+      fmt: (ts) => (ts.split(':').length === 3 ? 'paren-hms' : 'paren-ms'),
+    },
+    {
+      re: /^(\d{1,2}:\d{2}(?::\d{2})?)\s*-\s*(.+)$/,
+      fmt: (ts) => (ts.split(':').length === 3 ? 'dash-hms' : 'dash-ms'),
+    },
+    {
+      re: /^(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+)$/,
+      fmt: () => 'plain',
+    },
+  ];
+  const speakerColonRe = /^([A-Za-z][A-Za-z0-9 ._-]{0,40}?)\s*:\s*(?!\/\/)(.*)$/;
+  const otterRe = /^([*_]{0,3}[A-Za-z][A-Za-z0-9 ._-]{0,40}?[*_]{0,3})\s{1,4}(\d{1,2}:\d{2}(?::\d{2})?)\s*$/;
   const vttCueRe = /^(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)\s*-->\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?/;
-  const untimestampedSpeakerRe = /^([A-Za-z][A-Za-z0-9 ._-]{0,40}?)\s*:\s*(.+)$/;
+  const standaloneTsRe = /^\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?$/;
+  const transcriptionEndedRe = /^Transcription ended after\s+(\d{1,2}:\d{2}(?::\d{2})?)\b/i;
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
@@ -236,9 +337,21 @@ export function parseTranscript(transcript: string): ParsedTranscript {
     }
 
     let m: RegExpMatchArray | null;
+    if ((m = line.match(transcriptionEndedRe))) {
+      pushCurrent();
+      const footerSec = parseTimestampToSec(m[1]);
+      if (footerSec !== null) {
+        footerTimestampSecs.push(footerSec);
+      }
+      activeSectionTimestamp = null;
+      pendingVttTimestamp = null;
+      continue;
+    }
+
     if ((m = line.match(vttCueRe))) {
       pushCurrent();
       setFormat('vtt');
+      activeSectionTimestamp = null;
       const sec = parseTimestampToSec(m[1]);
       if (sec !== null) {
         pendingVttTimestamp = { raw: m[1], sec };
@@ -246,112 +359,98 @@ export function parseTranscript(transcript: string): ParsedTranscript {
       continue;
     }
 
-    if ((m = line.match(bracketRe))) {
+    if ((m = line.match(standaloneTsRe))) {
       const sec = parseTimestampToSec(m[1]);
       if (sec !== null) {
         pushCurrent();
-        setFormat(m[1].split(':').length === 3 ? 'bracket-hms' : 'bracket-ms');
-        currentTurn = {
-          turnIndex: turns.length + 1,
-          speaker: m[2].trim(),
-          role: classifySpeakerRole(m[2]),
-          rawTimestamp: m[1],
-          timestampFormatted: formatSecAsHms(sec),
-          timestampSec: sec,
-          text: m[3] || '',
-        };
-        pendingVttTimestamp = null;
+        setFormat(m[1].split(':').length === 3 ? 'otter' : 'plain');
+        activeSectionTimestamp = { raw: m[1], sec };
+        pendingVttTimestamp = { raw: m[1], sec };
         continue;
       }
     }
 
-    if ((m = line.match(parenRe))) {
-      const sec = parseTimestampToSec(m[1]);
-      if (sec !== null) {
-        pushCurrent();
-        setFormat(m[1].split(':').length === 3 ? 'paren-hms' : 'paren-ms');
-        currentTurn = {
-          turnIndex: turns.length + 1,
-          speaker: m[2].trim(),
-          role: classifySpeakerRole(m[2]),
-          rawTimestamp: m[1],
-          timestampFormatted: formatSecAsHms(sec),
-          timestampSec: sec,
-          text: m[3] || '',
-        };
-        pendingVttTimestamp = null;
-        continue;
-      }
+    if (
+      turns.length === 0 &&
+      !currentTurn &&
+      !activeSectionTimestamp &&
+      !pendingVttTimestamp &&
+      isTopHeaderNoise(line)
+    ) {
+      continue;
     }
 
-    if ((m = line.match(dashRe))) {
-      const sec = parseTimestampToSec(m[1]);
-      if (sec !== null) {
-        pushCurrent();
-        setFormat(m[1].split(':').length === 3 ? 'dash-hms' : 'dash-ms');
-        currentTurn = {
-          turnIndex: turns.length + 1,
-          speaker: m[2].trim(),
-          role: classifySpeakerRole(m[2]),
-          rawTimestamp: m[1],
-          timestampFormatted: formatSecAsHms(sec),
-          timestampSec: sec,
-          text: m[3] || '',
-        };
-        pendingVttTimestamp = null;
-        continue;
+    let matchedTimestamped = false;
+    for (const pat of timestampedPatterns) {
+      if ((m = line.match(pat.re))) {
+        const sec = parseTimestampToSec(m[1]);
+        if (sec !== null) {
+          const { normalized, hadEmphasis } = normalizeSpeakerPrefixLine(m[2]);
+          const spkMatch = normalized.match(speakerColonRe);
+          if (spkMatch) {
+            const spk = spkMatch[1].trim();
+            const textAfter = spkMatch[2] || '';
+            if (!isSpeakerMetadataGuard(spk, textAfter, turns.length === 0 && !currentTurn, hadEmphasis)) {
+              pushCurrent();
+              setFormat(pat.fmt(m[1]));
+              currentTurn = {
+                turnIndex: turns.length + 1,
+                speaker: spk,
+                role: classifySpeakerRole(spk),
+                rawTimestamp: m[1],
+                timestampFormatted: formatSecAsHms(sec),
+                timestampSec: sec,
+                text: textAfter.trim(),
+              };
+              pendingVttTimestamp = null;
+              activeSectionTimestamp = null;
+              matchedTimestamped = true;
+              break;
+            }
+          }
+        }
       }
     }
-
-    if ((m = line.match(plainTsSpeakerRe))) {
-      const sec = parseTimestampToSec(m[1]);
-      if (sec !== null) {
-        pushCurrent();
-        setFormat('plain');
-        currentTurn = {
-          turnIndex: turns.length + 1,
-          speaker: m[2].trim(),
-          role: classifySpeakerRole(m[2]),
-          rawTimestamp: m[1],
-          timestampFormatted: formatSecAsHms(sec),
-          timestampSec: sec,
-          text: m[3] || '',
-        };
-        pendingVttTimestamp = null;
-        continue;
-      }
-    }
+    if (matchedTimestamped) continue;
 
     if ((m = line.match(otterRe))) {
       const sec = parseTimestampToSec(m[2]);
-      if (sec !== null) {
+      const cleanedSpeaker = m[1].replace(/^[*_]+|[*_]+$/g, '').trim();
+      const isDateOnly =
+        /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}$/i.test(cleanedSpeaker);
+      if (sec !== null && cleanedSpeaker && !isDateOnly && !METADATA_HEADER_KEY_RE.test(cleanedSpeaker)) {
         pushCurrent();
         setFormat('otter');
         currentTurn = {
           turnIndex: turns.length + 1,
-          speaker: m[1].trim(),
-          role: classifySpeakerRole(m[1]),
+          speaker: cleanedSpeaker,
+          role: classifySpeakerRole(cleanedSpeaker),
           rawTimestamp: m[2],
           timestampFormatted: formatSecAsHms(sec),
           timestampSec: sec,
           text: '',
         };
         pendingVttTimestamp = null;
+        activeSectionTimestamp = null;
         continue;
       }
     }
 
-    if ((m = line.match(untimestampedSpeakerRe))) {
+    const { normalized: normLine, hadEmphasis } = normalizeSpeakerPrefixLine(line);
+    if ((m = normLine.match(speakerColonRe))) {
       const candidateSpeaker = m[1].trim();
-      // Avoid splitting prose sentences containing colons like "First: we should..."
+      const textAfterColon = m[2] ?? '';
+      const hasTextOrExplicitRole =
+        textAfterColon.trim().length > 0 || classifySpeakerRole(candidateSpeaker) !== 'other';
+      const isAtTop = turns.length === 0 && !currentTurn;
+      // Avoid splitting prose sentences containing colons like "First: we should..." or metadata headers
       const looksLikeSpeaker =
+        hasTextOrExplicitRole &&
         candidateSpeaker.split(/\s+/).length <= 3 &&
-        !/^(?:note|first|second|third|example|e\.g|step|option|summary|metric|question|answer)\b/i.test(
-          candidateSpeaker,
-        );
+        !isSpeakerMetadataGuard(candidateSpeaker, textAfterColon, isAtTop, hadEmphasis);
       if (looksLikeSpeaker) {
         pushCurrent();
-        const ts = pendingVttTimestamp;
+        const ts = pendingVttTimestamp ?? activeSectionTimestamp;
         pendingVttTimestamp = null;
         currentTurn = {
           turnIndex: turns.length + 1,
@@ -364,7 +463,7 @@ export function parseTranscript(transcript: string): ParsedTranscript {
                 timestampSec: ts.sec,
               }
             : {}),
-          text: m[2] || '',
+          text: textAfterColon.trim(),
         };
         continue;
       }
@@ -374,7 +473,7 @@ export function parseTranscript(transcript: string): ParsedTranscript {
     if (currentTurn) {
       currentTurn.text = currentTurn.text ? `${currentTurn.text} ${line}` : line;
     } else {
-      const ts = pendingVttTimestamp;
+      const ts = pendingVttTimestamp ?? activeSectionTimestamp;
       pendingVttTimestamp = null;
       currentTurn = {
         turnIndex: turns.length + 1,
@@ -395,26 +494,85 @@ export function parseTranscript(transcript: string): ParsedTranscript {
   pushCurrent();
 
   // Assign heuristic roles when neither role or only one role is explicitly labeled
+  const totalDialogueWords = turns.reduce((acc, t) => acc + t.wordCount, 0);
+  const speakerStatsMap = new Map<
+    string,
+    { speaker: string; role: SpeakerRole; words: number; turns: number; questionTurns: number }
+  >();
+  for (const turn of turns) {
+    if (turn.speaker === 'Speaker') continue;
+    const entry = speakerStatsMap.get(turn.speaker) ?? {
+      speaker: turn.speaker,
+      role: turn.role,
+      words: 0,
+      turns: 0,
+      questionTurns: 0,
+    };
+    entry.words += turn.wordCount;
+    entry.turns += 1;
+    if (/\?/.test(turn.text)) {
+      entry.questionTurns += 1;
+    }
+    speakerStatsMap.set(turn.speaker, entry);
+  }
+
+  const realSpeakers = Array.from(speakerStatsMap.values()).filter(
+    (s) => totalDialogueWords < 100 || s.words >= 15,
+  );
+  const realSpeakerSet = new Set(realSpeakers.map((s) => s.speaker));
+
   const hasExplicitInterviewer = turns.some((t) => t.role === 'interviewer');
   const hasExplicitCandidate = turns.some((t) => t.role === 'candidate');
-  if (!hasExplicitInterviewer && !hasExplicitCandidate && turns.length > 0) {
-    const distinctSpeakers = Array.from(new Set(turns.map((t) => t.speaker)));
-    if (distinctSpeakers.length === 2) {
-      const firstSpeaker = turns[0].speaker;
-      for (const turn of turns) {
-        turn.role = turn.speaker === firstSpeaker ? 'interviewer' : 'candidate';
+
+  if (hasExplicitInterviewer !== hasExplicitCandidate) {
+    const inferredRole: SpeakerRole = hasExplicitInterviewer ? 'candidate' : 'interviewer';
+    for (const turn of turns) {
+      if (turn.role === 'other' && realSpeakerSet.has(turn.speaker)) {
+        turn.role = inferredRole;
       }
     }
-  } else if (hasExplicitInterviewer !== hasExplicitCandidate) {
-    const otherSpeakers = Array.from(
-      new Set(turns.filter((t) => t.role === 'other').map((t) => t.speaker)),
-    );
-    if (otherSpeakers.length === 1) {
-      const inferredRole: SpeakerRole = hasExplicitInterviewer ? 'candidate' : 'interviewer';
-      for (const turn of turns) {
-        if (turn.role === 'other') {
-          turn.role = inferredRole;
+  } else if (!hasExplicitInterviewer && !hasExplicitCandidate && realSpeakers.length >= 2) {
+    const inferredBySpeaker = new Map<string, SpeakerRole>();
+    if (realSpeakers.length === 2) {
+      const [a, b] = realSpeakers;
+      const avgA = a.words / Math.max(1, a.turns);
+      const avgB = b.words / Math.max(1, b.turns);
+      const scoreA = (a.questionTurns / Math.max(1, a.turns)) * 2 - avgA / 120;
+      const scoreB = (b.questionTurns / Math.max(1, b.turns)) * 2 - avgB / 120;
+      if (Math.abs(scoreA - scoreB) > 0.15) {
+        if (scoreA > scoreB) {
+          inferredBySpeaker.set(a.speaker, 'interviewer');
+          inferredBySpeaker.set(b.speaker, 'candidate');
+        } else {
+          inferredBySpeaker.set(b.speaker, 'interviewer');
+          inferredBySpeaker.set(a.speaker, 'candidate');
         }
+      } else {
+        inferredBySpeaker.set(a.speaker, 'interviewer');
+        inferredBySpeaker.set(b.speaker, 'candidate');
+      }
+    } else {
+      const totalRealWords = realSpeakers.reduce((sum, s) => sum + s.words, 0);
+      const top = [...realSpeakers].sort((x, y) => y.words - x.words)[0];
+      const others = realSpeakers.filter((s) => s.speaker !== top.speaker);
+      const topQRate = top.questionTurns / Math.max(1, top.turns);
+      const avgOtherQRate =
+        others.reduce((sum, s) => sum + s.questionTurns / Math.max(1, s.turns), 0) /
+        Math.max(1, others.length);
+      if (top.words >= totalRealWords * 0.35 && topQRate < avgOtherQRate) {
+        inferredBySpeaker.set(top.speaker, 'candidate');
+        for (const other of others) {
+          if (other.questionTurns > 0) {
+            inferredBySpeaker.set(other.speaker, 'interviewer');
+          }
+        }
+      }
+    }
+
+    for (const turn of turns) {
+      const role = inferredBySpeaker.get(turn.speaker);
+      if (role) {
+        turn.role = role;
       }
     }
   }
@@ -425,15 +583,16 @@ export function parseTranscript(transcript: string): ParsedTranscript {
   const secs = turns
     .map((t) => t.timestampSec)
     .filter((s): s is number => typeof s === 'number');
+  const boundSecs = timestamps.length > 0 ? [...secs, ...footerTimestampSecs] : secs;
 
   return {
     hasTimestamps: timestamps.length > 0,
     timestampFormat: timestamps.length > 0 ? detectedFormat : 'none',
     validTimestamps: Array.from(new Set(timestamps)),
-    ...(secs.length > 0
+    ...(boundSecs.length > 0
       ? {
-          minTimestampSec: Math.min(...secs),
-          maxTimestampSec: Math.max(...secs),
+          minTimestampSec: Math.min(...boundSecs),
+          maxTimestampSec: Math.max(...boundSecs),
         }
       : {}),
     turns,
@@ -981,6 +1140,42 @@ function isTalkRatioPair(raw: string, fullLine: string): boolean {
   return false;
 }
 
+function extractInlineTranscriptTimestampSecs(transcript: string): number[] {
+  const secs: number[] = [];
+  const lines = (transcript || '').replace(/\r\n/g, '\n').split('\n');
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (/^Transcription ended after\s+\d{1,2}:\d{2}(?::\d{2})?\b/i.test(line)) {
+      continue;
+    }
+    const matches = line.matchAll(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g);
+    for (const match of matches) {
+      const rawTs = match[0];
+      if (isTalkRatioPair(rawTs, line)) continue;
+      const idx = match.index ?? 0;
+      const before = line.slice(0, idx);
+      const after = line.slice(idx + rawTs.length);
+      if (/^\s*(?:am|pm|a\.m\.|p\.m\.|pst|pdt|est|edt|cst|cdt|mst|mdt|utc|gmt)\b/i.test(after)) {
+        continue;
+      }
+      if (
+        /\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\s*$/.test(before) ||
+        /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{2,4}\s*(?:at\s+)?$/i.test(
+          before,
+        )
+      ) {
+        continue;
+      }
+      const sec = parseTimestampToSec(rawTs);
+      if (sec !== null) {
+        secs.push(sec);
+      }
+    }
+  }
+  return secs;
+}
+
 export function verifyEvaluationDraft(
   transcript: string,
   draftMarkdown: string,
@@ -994,9 +1189,27 @@ export function verifyEvaluationDraft(
   const citedTimestamps: string[] = [];
   const hallucinatedTimestamps: string[] = [];
   const verifiedTimestamps: string[] = [];
-  const turnSecs = parsed.turns
+  const parsedTurnSecs = parsed.turns
     .map((t) => t.timestampSec)
     .filter((s): s is number => typeof s === 'number');
+  const inlineSecs = extractInlineTranscriptTimestampSecs(transcript);
+  const distinctInlineSecs = new Set(inlineSecs);
+
+  const effectiveHasTimestamps = parsed.hasTimestamps || distinctInlineSecs.size >= 2;
+  const turnSecsSet = new Set<number>(parsedTurnSecs);
+  if (effectiveHasTimestamps) {
+    for (const s of inlineSecs) {
+      turnSecsSet.add(s);
+    }
+  }
+  const turnSecs = Array.from(turnSecsSet);
+  const boundSecs = [
+    ...turnSecs,
+    ...(typeof parsed.minTimestampSec === 'number' ? [parsed.minTimestampSec] : []),
+    ...(typeof parsed.maxTimestampSec === 'number' ? [parsed.maxTimestampSec] : []),
+  ];
+  const minBoundSec = boundSecs.length > 0 ? Math.min(...boundSecs) : 0;
+  const maxBoundSec = boundSecs.length > 0 ? Math.max(...boundSecs) : 0;
 
   const lines = (draftMarkdown || '').split('\n');
   for (const line of lines) {
@@ -1014,19 +1227,17 @@ export function verifyEvaluationDraft(
       const formatted = formatSecAsHms(sec);
       citedTimestamps.push(rawTs);
 
-      if (!parsed.hasTimestamps) {
+      if (!effectiveHasTimestamps) {
         if (!hallucinatedTimestamps.includes(rawTs)) {
           hallucinatedTimestamps.push(rawTs);
         }
       } else {
-        const minSec = parsed.minTimestampSec ?? 0;
-        const maxSec = (parsed.maxTimestampSec ?? 0) + 60;
         const nearestDist =
           turnSecs.length > 0
             ? Math.min(...turnSecs.map((ts) => Math.abs(ts - sec)))
             : Number.POSITIVE_INFINITY;
 
-        if (sec < Math.max(0, minSec - 15) || sec > maxSec || nearestDist > 90) {
+        if (sec < Math.max(0, minBoundSec - 30) || sec > maxBoundSec + 180 || nearestDist > 360) {
           if (!hallucinatedTimestamps.includes(rawTs)) {
             hallucinatedTimestamps.push(rawTs);
           }
@@ -1037,11 +1248,11 @@ export function verifyEvaluationDraft(
     }
   }
 
-  if (!parsed.hasTimestamps && hallucinatedTimestamps.length > 0) {
+  if (!effectiveHasTimestamps && hallucinatedTimestamps.length > 0) {
     issues.push(
       `Hallucinated clock timestamps on an untimestamped transcript: ${hallucinatedTimestamps.join(', ')}. Cite Turn #N instead of fabricated timestamps.`,
     );
-  } else if (parsed.hasTimestamps && hallucinatedTimestamps.length > 0) {
+  } else if (effectiveHasTimestamps && hallucinatedTimestamps.length > 0) {
     issues.push(
       `Out-of-range or unanchored timestamps cited: ${hallucinatedTimestamps.join(', ')}. Anchor only to observed transcript timestamps.`,
     );
@@ -1098,6 +1309,8 @@ export function verifyEvaluationDraft(
   let citedTalkRatioPct: number | undefined;
   let talkRatioDriftPp: number | undefined;
 
+  const hasMeasuredRatio =
+    metrics.candidateTalkRatioPct > 0 || metrics.interviewerTalkRatioPct > 0;
   const ratioContextRe =
     /(?:talk[- ]to[- ]listen|talk\s*\/\s*listen|candidate[- ]to[- ]interviewer|talk ratio)[^\n]{0,60}?(\d{1,2}(?:\.\d+)?)\s*(?::|\/|%)/i;
   const ratioMatch = draftMarkdown.match(ratioContextRe);
@@ -1105,11 +1318,13 @@ export function verifyEvaluationDraft(
     const val = Number.parseFloat(ratioMatch[1]);
     if (!Number.isNaN(val) && val > 0 && val < 100) {
       citedTalkRatioPct = val;
-      talkRatioDriftPp = Math.round(Math.abs(val - metrics.candidateTalkRatioPct) * 10) / 10;
-      if (talkRatioDriftPp > 5) {
-        issues.push(
-          `Talk-to-listen ratio drift of ${talkRatioDriftPp}pp: draft cites ${val}% candidate talk, while measured transcript is ${metrics.candidateTalkRatioPct}:${metrics.interviewerTalkRatioPct}.`,
-        );
+      if (hasMeasuredRatio) {
+        talkRatioDriftPp = Math.round(Math.abs(val - metrics.candidateTalkRatioPct) * 10) / 10;
+        if (talkRatioDriftPp > 5) {
+          issues.push(
+            `Talk-to-listen ratio drift of ${talkRatioDriftPp}pp: draft cites ${val}% candidate talk, while measured transcript is ${metrics.candidateTalkRatioPct}:${metrics.interviewerTalkRatioPct}.`,
+          );
+        }
       }
     }
   } else {
@@ -1156,7 +1371,7 @@ export function verifyEvaluationDraft(
     issues,
     warnings,
     summary: {
-      hasTimestamps: parsed.hasTimestamps,
+      hasTimestamps: effectiveHasTimestamps,
       citedTimestampCount: citedTimestamps.length,
       hallucinatedTimestamps,
       verifiedTimestamps,

@@ -13,6 +13,7 @@ import {
 } from './pi-skills.js';
 import {
   auditAnswerQuality,
+  classifySpeakerRole,
   computeTranscriptMetrics,
   extractQaTurns,
   parseTranscript,
@@ -236,6 +237,234 @@ Verdict: Borderline
     assert.equal(result.passed, true, `Expected pass, got issues: ${result.issues.join('; ')}`);
     assert.equal(result.summary.hallucinatedTimestamps.length, 0);
     assert.ok(result.summary.verifiedQuoteCount >= 2);
+  });
+
+  it('recognizes I1/I2/Interviewer N, C1/Candidate N, Q/A, and host roles in classifySpeakerRole', () => {
+    assert.equal(classifySpeakerRole('I1'), 'interviewer');
+    assert.equal(classifySpeakerRole('I2'), 'interviewer');
+    assert.equal(classifySpeakerRole('Interviewer 1'), 'interviewer');
+    assert.equal(classifySpeakerRole('Interviewer2'), 'interviewer');
+    assert.equal(classifySpeakerRole('Q'), 'interviewer');
+    assert.equal(classifySpeakerRole('Panelist'), 'interviewer');
+    assert.equal(classifySpeakerRole('C1'), 'candidate');
+    assert.equal(classifySpeakerRole('Candidate 2'), 'candidate');
+    assert.equal(classifySpeakerRole('A'), 'candidate');
+    assert.equal(classifySpeakerRole('Interviewee'), 'candidate');
+    assert.equal(classifySpeakerRole('Ian'), 'other');
+    assert.equal(classifySpeakerRole('Claire'), 'other');
+    assert.equal(classifySpeakerRole('Quinn'), 'other');
+  });
+
+  it('ignores Google Meet/Otter footer and top header noise while attaching standalone section timestamps', () => {
+    const meetTranscript = [
+      'Google Meet Transcript',
+      'Feb 14, 2026 - Product Sense Mock',
+      '2026-02-14 10:30 AM PST',
+      '',
+      '00:00:00',
+      'Alice Chen: Welcome! Let us design a transit trip planner for commuters.',
+      'Bob Patel: Thanks! Before jumping in, let me clarify the target city and user goal.',
+      '',
+      '00:04:30',
+      'Bob Patel: I will focus on daily rail commuters who transfer between lines and face missed connections.',
+      'Alice Chen: Why focus on rail commuters instead of occasional airport travelers?',
+      'Bob Patel: Rail commuters ride twice daily, so reliability improvements compound into strong retention.',
+      '',
+      'Transcription ended after 00:12:45',
+    ].join('\n');
+
+    const parsed = parseTranscript(meetTranscript);
+    assert.equal(parsed.hasTimestamps, true);
+    assert.equal(parsed.timestampFormat, 'otter');
+    assert.equal(parsed.maxTimestampSec, 12 * 60 + 45);
+    assert.equal(
+      parsed.turns.some((t) => /transcription ended/i.test(t.speaker) || /transcription ended/i.test(t.text)),
+      false,
+    );
+    assert.equal(parsed.turns.length, 5);
+    assert.equal(parsed.turns[0].speaker, 'Alice Chen');
+    assert.equal(parsed.turns[0].timestampFormatted, '00:00:00');
+    assert.equal(parsed.turns[1].speaker, 'Bob Patel');
+    assert.equal(parsed.turns[1].timestampFormatted, '00:00:00');
+    assert.equal(parsed.turns[2].speaker, 'Bob Patel');
+    assert.equal(parsed.turns[2].timestampFormatted, '00:04:30');
+    assert.equal(parsed.turns[3].speaker, 'Alice Chen');
+    assert.equal(parsed.turns[3].timestampFormatted, '00:04:30');
+
+    // Standalone timestamps with prose only (no speaker labels) create distinct segments
+    const proseWithTimestamps = [
+      '00:03',
+      'First segment discusses framing the problem and defining success metrics clearly.',
+      '00:18',
+      'Second segment explores user pain points and prioritization trade-offs.',
+      '00:45',
+      'Third segment covers North Star and guardrail metrics.',
+    ].join('\n');
+    const proseParsed = parseTranscript(proseWithTimestamps);
+    assert.equal(proseParsed.hasTimestamps, true);
+    assert.equal(proseParsed.timestampFormat, 'plain');
+    assert.equal(proseParsed.turns.length, 3);
+    assert.deepEqual(
+      proseParsed.turns.map((t) => t.timestampFormatted),
+      ['00:00:03', '00:00:18', '00:00:45'],
+    );
+    assert.equal(proseParsed.turns.every((t) => t.speaker === 'Speaker'), true);
+  });
+
+  it('strips markdown emphasis around speakers and guards document metadata headers', () => {
+    const mdTranscript = [
+      '**Program:** APM Loop',
+      '**Candidate:** Jordan Lee',
+      '**Interview Date:** 2026-02-20',
+      '**Interviewer(s):** I1, I2',
+      '**Duration:** 45 minutes',
+      '**Overall Score:** Pending',
+      '',
+      '**I1:** How would you improve neighborhood grocery delivery?',
+      '**Jordan Lee**: Great question. Note: I want to start by clarifying geographic scope and delivery speed.',
+      '**I2:** Focus on suburban families with weekly bulk orders.',
+      '*Jordan Lee:* First: we should examine cart assembly time and substitution trust.',
+      '**Summary: I would prioritize a smart substitution preview before checkout.**',
+    ].join('\n');
+
+    const parsed = parseTranscript(mdTranscript);
+    const speakers = Array.from(new Set(parsed.turns.map((t) => t.speaker)));
+    assert.deepEqual(speakers, ['I1', 'Jordan Lee', 'I2']);
+    assert.equal(parsed.turns[0].role, 'interviewer');
+    assert.equal(parsed.turns[1].role, 'candidate');
+    assert.equal(parsed.turns[2].role, 'interviewer');
+    assert.equal(parsed.turns[3].role, 'candidate');
+    assert.match(parsed.turns[3].text, /Summary:/);
+  });
+
+  it('infers roles accurately across 2-speaker candidate-first, mixed explicit, and 3+ speaker panels', () => {
+    // 1. Mixed explicit interviewer (I1, I2) + named candidate + <15-word noise speaker (>= 100 total words)
+    const mixedPanel = [
+      'I1: Tell me about a difficult product trade-off you led recently and how you aligned engineering and design.',
+      'I2: Also include how you measured post-launch impact and what specific risks you accepted along the way.',
+      'Coordinator: Recording started now.',
+      'Morgan: I owned a checkout redesign where we delayed one-click upsells for six weeks to fix latency across our mobile web and native iOS funnels.',
+      'Morgan: Specifically I partnered with backend leads to cut p95 checkout time from 900ms to 280ms by removing synchronous third-party tax calls and precomputing shipping estimates.',
+      'Morgan: After launch, conversion rose 4.2 percent while support tickets dropped 18 percent across mobile checkout sessions over the following quarter.',
+    ].join('\n');
+    const mixedParsed = parseTranscript(mixedPanel);
+    const morganTurns = mixedParsed.turns.filter((t) => t.speaker === 'Morgan');
+    const coordTurns = mixedParsed.turns.filter((t) => t.speaker === 'Coordinator');
+    assert.equal(morganTurns.every((t) => t.role === 'candidate'), true);
+    assert.equal(coordTurns.every((t) => t.role === 'other'), true);
+
+    // 2. Two unnamed speakers where candidate speaks first with long answers and interviewer asks questions second
+    const candidateFirst = [
+      'Taylor: Hi everyone, thank you so much for making time today. I am excited to walk through a product I use daily and discuss improvements.',
+      'Taylor: I would start by breaking down user segments into power creators, casual viewers, and small local businesses who need discoverability without paid promotion overhead.',
+      'Devon: Why prioritize local businesses?',
+      'Taylor: Because local businesses face cold-start visibility gaps, whereas large creators already have cross-platform distribution channels and dedicated analytics tools to optimize retention.',
+      'Devon: What metrics would you track?',
+    ].join('\n');
+    const cfParsed = parseTranscript(candidateFirst);
+    assert.equal(cfParsed.turns.filter((t) => t.speaker === 'Devon').every((t) => t.role === 'interviewer'), true);
+    assert.equal(cfParsed.turns.filter((t) => t.speaker === 'Taylor').every((t) => t.role === 'candidate'), true);
+
+    // 3. Three+ unnamed speakers: highest word count & lower question rate => candidate; question-asking panelists => interviewer
+    const threeSpeakerPanel = [
+      'Panelist One: How would you design a collaborative study space feature inside an education app for university students?',
+      'Panelist Two: What guardrails would you put in place to prevent distraction or spam in shared rooms?',
+      'Sora: Let me structure this in three parts: user segments, pain points, and metrics. First, let us focus on exam-prep cohorts studying together asynchronously across time zones.',
+      'Sora: For pain points, students lose accountability when studying alone, yet live video rooms often turn noisy. An ambient co-study timer with shared milestone check-ins solves both.',
+      'Sora: For metrics, our North Star is completed 45-minute study sessions per active cohort, guarded by session drop-off rate and moderation report volume per thousand sessions.',
+      'Panelist One: How would you handle cold start for a new campus?',
+    ].join('\n');
+    const panelParsed = parseTranscript(threeSpeakerPanel);
+    assert.equal(panelParsed.turns.filter((t) => t.speaker === 'Sora').every((t) => t.role === 'candidate'), true);
+    assert.equal(
+      panelParsed.turns.filter((t) => t.speaker === 'Panelist One').every((t) => t.role === 'interviewer'),
+      true,
+    );
+    assert.equal(
+      panelParsed.turns.filter((t) => t.speaker === 'Panelist Two').every((t) => t.role === 'interviewer'),
+      true,
+    );
+  });
+
+  it('verifyEvaluationDraft detects inline timestamps, widens Google Meet periodic gap tolerance, and skips 0:0 ratio drift', () => {
+    // 1. Structured notes with inline timestamps and time-of-day header, no speaker diarization
+    const notesTranscript = [
+      'Interview Notes - 2026-02-14 13:02 PST',
+      '- Framed the travel planning problem cleanly and picked solo travelers (02:05).',
+      '- Explored itinerary sharing options and mobile offline caching constraints (05:34).',
+      '- Defined North Star completed trips and cancellation guardrail metric (11:20).',
+    ].join('\n');
+
+    const notesDraft = `
+## Rubric Scorecard
+| Competency | Score | Evidence |
+| --- | --- | --- |
+| Product Sense | 7/10 | Picked solo travelers at 02:05 |
+
+### Question 1: Travel Planner
+- **Score**: 7/10
+- At \`05:34\`, candidate "Explored itinerary sharing options and mobile offline caching constraints" and later at \`11:20\` "Defined North Star completed trips and cancellation guardrail metric".
+- Strength: Clear segmentation and metrics.
+- Weakness: Needs sharper competitive differentiation.
+
+## Overall Assessment
+- **Overall Score**: 7/10
+- **Pass Verdict**: Borderline
+- **Talk-to-Listen Ratio**: 70:30 (estimated)
+- **Top 3 Strengths**: Structured framing, user focus, guardrail metrics.
+- **Top 3 Weaknesses**: Limited option breadth, late risk check, brief rollout plan.
+
+## Rewrites
+1. Instead of: "Explored itinerary sharing options and mobile offline caching constraints" -> After: "Compare three sharing workflows on sync reliability."
+2. Instead of: "Defined North Star completed trips and cancellation guardrail metric" -> After: "Pair completed trips with itinerary edit-churn guardrail."
+3. Instead of: "Framed the travel planning problem cleanly and picked solo travelers" -> After: "Size solo vs group travelers before prioritizing."
+4. Before: "mobile offline caching constraints" -> After: "Specify 50MB offline tile budget and background prefetch."
+5. Before: "cancellation guardrail metric" -> After: "Track 7-day rebooking failure rate below 1%."
+`;
+    const notesRes = verifyEvaluationDraft(notesTranscript, notesDraft);
+    assert.equal(notesRes.passed, true, `Expected pass, got issues: ${notesRes.issues.join('; ')}`);
+    assert.equal(notesRes.summary.hasTimestamps, true);
+    assert.equal(notesRes.summary.hallucinatedTimestamps.length, 0);
+    assert.equal(notesRes.summary.talkRatioDriftPp, undefined);
+
+    // 2. Google Meet 5.5-minute periodic gaps: 00:08:00 is 150s from 00:05:30 (<= 360s tolerance), 00:25:00 is out of range
+    const periodicTranscript = [
+      '00:00:00',
+      'Interviewer: Walk me through how you would prioritize onboarding fixes for a creator app.',
+      '00:05:30',
+      'Candidate: I would segment new creators by upload intent and measure first-publish completion rate within 48 hours.',
+      '00:11:00',
+      'Candidate: As a guardrail, I would track spam publish rate and creator support tickets per thousand uploads.',
+    ].join('\n');
+    const periodicMetrics = computeTranscriptMetrics(periodicTranscript);
+    const periodicRatio = `${Math.round(periodicMetrics.candidateTalkRatioPct)}:${Math.round(periodicMetrics.interviewerTalkRatioPct)}`;
+    const periodicGoodDraft = `
+### Question 1
+- **Score**: 7/10
+- At \`00:08:00\`, candidate emphasized "segment new creators by upload intent and measure first-publish completion rate within 48 hours".
+- Strength: Clear activation metric.
+- Weakness: Needs deeper supply-side analysis.
+
+## Overall Assessment
+- **Overall Score**: 7/10
+- **Pass Verdict**: Yes
+- **Talk-to-Listen Ratio**: ${periodicRatio}
+- **Top 3 Strengths**: Structured, metric-focused, clear guardrails.
+- **Top 3 Weaknesses**: Brief rollout plan, few options, short edge-case check.
+
+1. Instead of: "segment new creators by upload intent and measure first-publish completion rate within 48 hours" -> After: "Compare three onboarding experiments by activation lift."
+2. Instead of: "track spam publish rate and creator support tickets per thousand uploads" -> After: "Set an explicit <1.5% moderation hold guardrail."
+3. Before: "Walk me through how you would prioritize onboarding fixes for a creator app" -> After: "Clarify mobile vs web creator mix upfront."
+4. Before: "first-publish completion rate within 48 hours" -> After: "Measure D7 second-publish retention alongside first publish."
+5. Before: "creator support tickets per thousand uploads" -> After: "Include encode-failure latency p95 as a technical guardrail."
+`;
+    const periodicOk = verifyEvaluationDraft(periodicTranscript, periodicGoodDraft);
+    assert.equal(periodicOk.passed, true, `Expected pass, got issues: ${periodicOk.issues.join('; ')}`);
+
+    const periodicBadDraft = periodicGoodDraft.replace('00:08:00', '00:25:00');
+    const periodicFail = verifyEvaluationDraft(periodicTranscript, periodicBadDraft);
+    assert.equal(periodicFail.passed, false);
+    assert.deepEqual(periodicFail.summary.hallucinatedTimestamps, ['00:25:00']);
   });
 });
 

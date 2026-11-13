@@ -6,7 +6,12 @@ import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { AssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream';
 import { collectAnalysisSync, DEFAULT_ANTHROPIC_MODEL, hasLlmCredentials } from './analyzer.js';
 import { DEFAULT_ARMS, parseCliArgs, validateBakeoffEnvironment } from './bakeoff.js';
-import { analyzeInterviewPi, type PiRunTelemetry, resolvePiModelId } from './pi-analyzer.js';
+import {
+  analyzeInterviewPi,
+  buildPiSystemPrompt,
+  type PiRunTelemetry,
+  resolvePiModelId,
+} from './pi-analyzer.js';
 import {
   createPiModel,
   createPiStreamFn,
@@ -790,6 +795,65 @@ describe('pi-analyzer: streaming events, tool calls, intermediate text exclusion
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(callCount, 1);
     assert.deepEqual(seenTypes, ['start', 'raw']);
+  });
+
+  it('buildPiSystemPrompt requires Rubric Scorecard table, strict polish rule, estimated talk ratio fallback, and timestamp discipline', async () => {
+    const promptWithCache = buildPiSystemPrompt(
+      'google-apm',
+      ['google-apm', 'generic'],
+      '1. Product Sense\n2. Analytical Rigor',
+    );
+    assert.match(promptWithCache, /Rubric Scorecard/i);
+    assert.match(promptWithCache, /Markdown table/i);
+    assert.match(promptWithCache, /cached criteria/i);
+    assert.match(promptWithCache, /candidate and hiring committee/i);
+    assert.match(promptWithCache, /NEVER mention internal tools, parsers, scripts, verification loops/i);
+    assert.match(promptWithCache, /\(estimated\)/);
+    assert.match(promptWithCache, /instead of reporting `0:0`/);
+    assert.match(promptWithCache, /When `hasTimestamps` is `true`, ALWAYS cite real/i);
+    assert.match(promptWithCache, /Use `Turn #N`.*ONLY when `hasTimestamps` is `false`/i);
+
+    let capturedSystemPrompt = '';
+    const inspectPromptStream: StreamFn = (model, context) => {
+      const sysMsg = (context.messages as Array<{ role?: string; content?: unknown }>).find(
+        (m) => m.role === 'system',
+      );
+      const sysText =
+        typeof sysMsg?.content === 'string'
+          ? sysMsg.content
+          : Array.isArray(sysMsg?.content)
+            ? sysMsg.content
+                .map((b: { text?: string }) => (typeof b?.text === 'string' ? b.text : ''))
+                .join('')
+            : '';
+      capturedSystemPrompt = sysText;
+      const stream = new AssistantMessageEventStream();
+      queueMicrotask(() => {
+        const msg: AssistantMessage = {
+          role: 'assistant',
+          content: [{ type: 'text', text: '## Evaluation\n\n### Question 1\n- Score: 7/10' }],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: makeUsage(10, 5),
+          stopReason: 'stop',
+          timestamp: Date.now(),
+        };
+        stream.push({ type: 'start', partial: msg });
+        stream.push({ type: 'done', reason: 'stop', message: msg });
+      });
+      return stream;
+    };
+
+    const gen = await analyzeInterviewPi(
+      'Interviewer: Design a feature.\nCandidate: Sure.',
+      { interviewType: 'google-apm' },
+      inspectPromptStream,
+    );
+    await collectAnalysisSync(gen);
+    assert.match(capturedSystemPrompt, /Rubric Scorecard/i);
+    assert.match(capturedSystemPrompt, /NEVER mention internal tools/i);
+    assert.match(capturedSystemPrompt, /\(estimated\)/);
   });
 });
 

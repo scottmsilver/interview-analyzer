@@ -121,7 +121,7 @@ function createAsyncQueue<T>(): AsyncQueue<T> {
   };
 }
 
-function buildPiSystemPrompt(
+export function buildPiSystemPrompt(
   interviewType: string,
   availableRubrics: string[],
   cachedCriteria?: string,
@@ -145,11 +145,13 @@ REQUIRED EVALUATION WORKFLOW:
 3. Call \`analyze_transcript_metrics\` and \`extract_qa_turns\` to compute exact talk-to-listen ratio, timestamp format (\`hasTimestamps\`), valid timestamps, monologues (>=120 words), filler/hedging counts, "I" vs "we" pronoun counts, and segmented Q&A blocks with follow-up probes.
 4. Call \`audit_answer_quality\` (and \`run_transcript_js\` if you want custom arithmetic or verification over \`{ transcript, turns, metrics, qaPairs }\`) to inspect upfront framework, user segmentation before solutioning, option breadth, metric specificity (North Star + guardrail/counter-metrics vs vanity DAU/NPS), and whether trade-offs/blind spots were unprompted or interviewer-nudged.
 5. Draft a rigorous, direct, evidence-anchored Markdown evaluation containing ALL of:
+   - **Rubric Scorecard**: A dedicated Markdown table scoring each competency/dimension from ${cachedCriteria ? 'the cached criteria above and ' : ''}the loaded rubric (\`| Competency / Dimension | Score (X/10) | Evidence |\`) so rubric calibration is explicit.
    - Per-question sections (\`### Question N: ...\`) with question type, **Score: X/10**, structure quality, strengths, critical weaknesses, missed opportunities/blind spots, and bar-raiser comparison.
-   - **Timestamp discipline**: If \`hasTimestamps\` is \`true\`, anchor claims ONLY to verified timestamps from the transcript (e.g. \`00:06:10\`). If \`hasTimestamps\` is \`false\`, NEVER invent clock timestamps—cite \`Turn #N\` instead.
+   - **Timestamp & citation discipline**: When \`hasTimestamps\` is \`true\`, ALWAYS cite real \`HH:MM:SS\` / \`MM:SS\` timestamps from the transcript (e.g. \`00:06:10\`) rather than \`Turn #N\`. Use \`Turn #N\` (paired with speaker and quote context) ONLY when \`hasTimestamps\` is \`false\`—NEVER invent clock timestamps.
    - Verbatim quotes (\`"..."\`) copied accurately from the transcript.
-   - **Overall Assessment**: **Overall Score: X/10**, **Pass Verdict: Yes | No | Borderline**, **Top 3 Strengths**, **Top 3 Critical Weaknesses**, and the exact measured **Talk-to-Listen Ratio** (within <=5pp of \`candidateTalkRatioPct:interviewerTalkRatioPct\`).
+   - **Overall Assessment**: **Overall Score: X/10**, **Pass Verdict: Yes | No | Borderline**, **Top 3 Strengths**, **Top 3 Critical Weaknesses**, and **Talk-to-Listen Ratio** (within <=5pp of \`candidateTalkRatioPct:interviewerTalkRatioPct\`; if \`analyze_transcript_metrics\` reports \`0:0\` because speaker labels are absent, estimate the talk-to-listen ratio from the dialogue and mark it \`(estimated)\`, e.g. \`70:30 (estimated)\`, instead of reporting \`0:0\`).
    - **5–7 Concrete Rewrites** formatted as \`Instead of: "<verbatim quote>" -> After: "<stronger phrasing>"\` (or \`Before:\` -> \`After:\`).
+   - **Audience & polish rule**: Write strictly for the candidate and hiring committee—NEVER mention internal tools, parsers, scripts, verification loops, or tool quirks (never write "the parser failed", "the tool reported 0:0", or \`verify_evaluation_draft\`).
 6. MANDATORY: Call \`verify_evaluation_draft\` with your complete Markdown draft BEFORE emitting your final response. If \`passed\` is \`false\`, fix every flagged issue and re-run \`verify_evaluation_draft\` until \`passed\` is \`true\`.
 7. In your final assistant turn (after all tool calls finish), output ONLY the final verified Markdown evaluation with no preamble or tool narration.`;
 }
