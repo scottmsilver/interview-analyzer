@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { BrowserRouter as Router, Routes, Route, useNavigate, Outlet, useOutletContext, useLocation } from 'react-router-dom'
 import 'github-markdown-css/github-markdown-light.css'
 import 'highlight.js/styles/github.css'
@@ -36,12 +36,41 @@ export interface AuthContext {
 }
 
 // Hook for child components to access auth context
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   return useOutletContext<AuthContext>()
 }
 
 // Component for debug log entry
 type Phase = { label: string; status: 'connected' | 'thinking' | 'waiting' }
+type AnalysisMethod = 'direct-api' | 'agent-sdk' | 'pi-agent'
+
+interface RawProgressMessage {
+  content?: string
+  raw?: {
+    type?: string
+    tool?: string
+    [key: string]: unknown
+  }
+}
+
+const ANALYSIS_METHODS: ReadonlyArray<{
+  value: AnalysisMethod
+  label: string
+  description: string
+  estimatedSeconds: number
+}> = [
+  { value: 'direct-api', label: 'Fast', description: '~45 seconds, web search', estimatedSeconds: 60 },
+  { value: 'agent-sdk', label: 'Deep', description: '~2 minutes, thorough research', estimatedSeconds: 120 },
+  { value: 'pi-agent', label: 'Pi Agent', description: '~60-90s, transcript tools + rubrics', estimatedSeconds: 90 },
+]
+
+const TOOL_PHASE_LABELS: ReadonlyArray<[readonly string[], string]> = [
+  [['analyze_transcript_metrics', 'extract_qa_turns'], 'Parsing transcript & talk metrics'],
+  [['load_interview_rubric'], 'Loading role evaluation rubric'],
+  [['audit_answer_quality', 'run_transcript_js'], 'Auditing answer structure & quotes'],
+  [['verify_evaluation_draft'], 'Verifying timestamps & citations'],
+]
 
 /**
  * Map a progress message to a stable, human phase.
@@ -50,15 +79,21 @@ type Phase = { label: string; status: 'connected' | 'thinking' | 'waiting' }
  * summaries stream in continuously, so echoing their content into the status
  * indicator produced a blur of half-finished sentences.
  */
-function derivePhase(message: { content?: string; raw?: any }): Phase | null {
-  const rawType = message.raw?.type
+function derivePhase(message: RawProgressMessage): Phase | null {
+  const rawType = typeof message.raw?.type === 'string' ? message.raw.type : undefined
   const text = (message.content || '').toLowerCase()
 
   if (rawType === 'thinking_delta' || rawType === 'thinking_summary' || text.startsWith('thinking')) {
     return { label: 'Thinking through the evaluation', status: 'thinking' }
   }
   if (rawType === 'tool_use' || text.startsWith('using tool')) {
-    return { label: 'Researching interview standards', status: 'connected' }
+    const toolName = typeof message.raw?.tool === 'string' ? message.raw.tool.toLowerCase() : ''
+    const toolText = `${toolName} ${text}`
+    const matched = TOOL_PHASE_LABELS.find(([tools]) => tools.some((tool) => toolText.includes(tool)))
+    return {
+      label: matched ? matched[1] : 'Researching interview standards',
+      status: 'connected',
+    }
   }
   if (rawType === 'tool_result') {
     return { label: 'Reading research results', status: 'connected' }
@@ -203,12 +238,12 @@ function MainContent() {
   const [file, setFile] = useState<File | null>(null)
   const [interviewType, setInterviewType] = useState<string>('')
   const [interviewTypes, setInterviewTypes] = useState<InterviewTypeRecord[]>([])
-  const [analysisMethod, setAnalysisMethod] = useState<'direct-api' | 'agent-sdk'>('direct-api')
+  const [analysisMethod, setAnalysisMethod] = useState<AnalysisMethod>('direct-api')
   const [analyzing, setAnalyzing] = useState(false)
   const [analysis, setAnalysis] = useState('')
   const [error, setError] = useState('')
   const [statusMessage, setStatusMessage] = useState('')
-  const [agentLogs, setAgentLogs] = useState<{content: string, raw: any, at: number}[]>([])
+  const [agentLogs, setAgentLogs] = useState<{content: string, raw: unknown, at: number}[]>([])
   const [showLogs, setShowLogs] = useState(false)
   const [autoSaved, setAutoSaved] = useState(false)
   const [savedAnalysisId, setSavedAnalysisId] = useState<string | null>(null)
@@ -230,8 +265,8 @@ function MainContent() {
     getInterviewTypes().then((types) => {
       setInterviewTypes(types)
       // Set default to first type if not already set
-      if (types.length > 0 && !interviewType) {
-        setInterviewType(types[0].id)
+      if (types.length > 0) {
+        setInterviewType(prev => prev || types[0].id)
       }
     }).catch((err) => {
       console.error('Failed to fetch interview types:', err)
@@ -252,6 +287,48 @@ function MainContent() {
     }
   }, [])
 
+  const saveAnalysis = useCallback(async (autoSave = false) => {
+    if (!user || !analysis || !file) return null
+
+    try {
+      // Read the transcript content from the file
+      const transcriptContent = await file.text()
+
+      const now = new Date()
+      const nowISO = now.toISOString()
+
+      const analysisData = {
+        userId: user.uid,
+        interviewType,
+        transcriptFileName: file.name,
+        transcriptContent, // Store the actual transcript text
+        analysis,
+        title: `${file.name}`,
+        savedAt: formatDateTime(nowISO),
+        createdAt: nowISO,
+        updatedAt: nowISO,
+        // Sharing fields
+        shareId: generateShareId(),
+        shareMode: 'private' as 'private' | 'anyone' | 'specific',
+        sharedWith: [] as string[]
+      }
+
+      const docId = await createAnalysis(analysisData)
+
+      if (!autoSave) {
+        showToast('✓ Saved')
+      }
+
+      return docId
+    } catch (err) {
+      console.error('Error saving analysis:', err)
+      if (!autoSave) {
+        showToast('× Failed')
+      }
+      return null
+    }
+  }, [user, analysis, file, interviewType, showToast])
+
   // Auto-save when analysis is complete but don't navigate
   useEffect(() => {
     if (analysis && !analyzing && user && file && !autoSaved) {
@@ -269,7 +346,7 @@ function MainContent() {
 
       return () => clearTimeout(timer)
     }
-  }, [analysis, analyzing, user, file, autoSaved])
+  }, [analysis, analyzing, user, file, autoSaved, saveAnalysis])
 
   // Heartbeat effect for connection status
   useEffect(() => {
@@ -343,48 +420,6 @@ function MainContent() {
     setAnalysis('')
     setShowPasteDialog(false)
     setPastedText('')
-  }
-
-  const saveAnalysis = async (autoSave = false) => {
-    if (!user || !analysis || !file) return null
-
-    try {
-      // Read the transcript content from the file
-      const transcriptContent = await file.text()
-
-      const now = new Date()
-      const nowISO = now.toISOString()
-
-      const analysisData = {
-        userId: user.uid,
-        interviewType,
-        transcriptFileName: file.name,
-        transcriptContent, // Store the actual transcript text
-        analysis,
-        title: `${file.name}`,
-        savedAt: formatDateTime(nowISO),
-        createdAt: nowISO,
-        updatedAt: nowISO,
-        // Sharing fields
-        shareId: generateShareId(),
-        shareMode: 'private' as 'private' | 'anyone' | 'specific',
-        sharedWith: [] as string[]
-      }
-
-      const docId = await createAnalysis(analysisData)
-
-      if (!autoSave) {
-        showToast('✓ Saved')
-      }
-
-      return docId
-    } catch (err) {
-      console.error('Error saving analysis:', err)
-      if (!autoSave) {
-        showToast('× Failed')
-      }
-      return null
-    }
   }
 
   const analyzeInterview = async () => {
@@ -580,33 +615,25 @@ function MainContent() {
                   disabled={analyzing}
                   className="method-trigger"
                 >
-                  {analysisMethod === 'direct-api' ? 'Fast' : 'Deep'}
+                  {ANALYSIS_METHODS.find((m) => m.value === analysisMethod)?.label ?? 'Fast'}
                   <span className="dropdown-arrow">▾</span>
                 </button>
                 {showMethodDropdown && (
                   <div className="method-options">
-                    <button
-                      type="button"
-                      className={`method-option ${analysisMethod === 'direct-api' ? 'selected' : ''}`}
-                      onClick={() => {
-                        setAnalysisMethod('direct-api')
-                        setShowMethodDropdown(false)
-                      }}
-                    >
-                      <span className="method-name">Fast</span>
-                      <span className="method-desc">~45 seconds, web search</span>
-                    </button>
-                    <button
-                      type="button"
-                      className={`method-option ${analysisMethod === 'agent-sdk' ? 'selected' : ''}`}
-                      onClick={() => {
-                        setAnalysisMethod('agent-sdk')
-                        setShowMethodDropdown(false)
-                      }}
-                    >
-                      <span className="method-name">Deep</span>
-                      <span className="method-desc">~2 minutes, thorough research</span>
-                    </button>
+                    {ANALYSIS_METHODS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`method-option ${analysisMethod === option.value ? 'selected' : ''}`}
+                        onClick={() => {
+                          setAnalysisMethod(option.value)
+                          setShowMethodDropdown(false)
+                        }}
+                      >
+                        <span className="method-name">{option.label}</span>
+                        <span className="method-desc">{option.description}</span>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
@@ -661,7 +688,7 @@ function MainContent() {
               <h2 className="brewing-title">Brewing Your Analysis...</h2>
               <div className="time-estimate">
                 {(() => {
-                  const estimatedTotal = 120 // 2 minutes in seconds
+                  const estimatedTotal = ANALYSIS_METHODS.find((m) => m.value === analysisMethod)?.estimatedSeconds ?? 120
                   const minutes = Math.floor(elapsedSeconds / 60)
                   const seconds = elapsedSeconds % 60
                   const remaining = Math.max(0, estimatedTotal - elapsedSeconds)
