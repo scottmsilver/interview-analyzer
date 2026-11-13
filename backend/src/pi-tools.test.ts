@@ -985,6 +985,67 @@ Quantify adoption.
     const naRes = verifyEvaluationDraft(transcript, singleScoreUntestedDraft);
     assert.equal(naRes.passed, true, `Expected Untested (N/A) pass, got: ${naRes.issues.join('; ')}`);
   });
+
+  it('prevents short-quote backtracking, supports numbered/multi-line reframes and drill scripts, and catches ASR conversational like', () => {
+    const asrTranscript = [
+      '00:01:00',
+      'Interviewer: Walk me through how you debugged the model issue.',
+      '00:01:30',
+      'Candidate: I tried like running the pipeline, and it was like broken on our dataset so I would like to inspect the schema.',
+    ].join('\n');
+
+    const metrics = computeTranscriptMetrics(asrTranscript);
+    assert.equal(
+      metrics.fillerWords.counts.like,
+      1,
+      `Expected only conversational "was like broken" counted (excluding "like to" and "like running"), got ${metrics.fillerWords.counts.like}`,
+    );
+
+    const cleanDraft = `
+### Question 1: Debugging Workflow
+- **Score**: 6/10
+- At \`00:01:30\`, Candidate said "dataset" instead of tables, joins, and rows at 00:01:30, and a vague "pipeline" term instead of concrete schema checks.
+- **What a bar-raiser candidate says instead:**
+  "I isolated the failing table partition first, verified row-level null rates, and compared upstream schema changes before rerunning training."
+
+## 4. Sample Reframes
+1. **Before:** "I tried like running the pipeline, and it was like broken on our dataset"
+   **After:** "I reproduced the schema mismatch on a stratified sample before re-running the job."
+2. "Rather than guessing at the cause, I checked upstream partition logs first."
+
+## Time-Boxed Practice Drills
+- **30-second opening ritual**: "Let me structure this in three parts: symptom isolation, root-cause check, and prevention guardrail."
+- **Scripted stall phrase**: "Let me take five seconds to verify the exact failure boundary before proposing a fix."
+
+## Overall Assessment
+- **Overall Score**: 6/10
+- **Pass Verdict**: Borderline
+- **Talk-to-Listen Ratio**: ${Math.round(metrics.candidateTalkRatioPct)}:${Math.round(metrics.interviewerTalkRatioPct)}
+- **Top 3 Strengths**: Honest narration, clear symptom identification, iterative testing.
+- **Top 3 Critical Weaknesses**: Filler phrasing, imprecise schema vocabulary, reactive debugging.
+
+1. Instead of: "I tried like running the pipeline" -> After: "State the hypothesis first."
+2. Before: "it was like broken on our dataset" -> After: "Specify which partition failed."
+3. Before: "so I would like to inspect the schema" -> After: "Lead with row-count invariants."
+4. Before: "I tried like running the pipeline, and it was like broken" -> After: "Describe the root cause cleanly."
+5. Before: "broken on our dataset so I would like to inspect" -> After: "Close with post-fix monitoring."
+`;
+    const okRes = verifyEvaluationDraft(asrTranscript, cleanDraft);
+    assert.equal(okRes.passed, true, `Expected pass without false positives, got: ${okRes.issues.join('; ')}`);
+
+    // Even inside numbered Sample Reframes and Practice Drills, explicit source citations / Before: must still verify
+    const sneakFabrication = verifyEvaluationDraft(
+      asrTranscript,
+      `## 4. Sample Reframes
+1. **Before:** "I fabricated a completely fake quote inside numbered reframes"
+   **After:** "Use a real transcript quote."
+## Time-Boxed Practice Drills
+- At 00:01:30 candidate said "I fabricated a cited quote inside the drills section too"`,
+    );
+    assert.equal(sneakFabrication.passed, false);
+    assert.ok(sneakFabrication.summary.unverifiedQuotes.some((q) => /fabricated a completely fake quote/.test(q)));
+    assert.ok(sneakFabrication.summary.unverifiedQuotes.some((q) => /fabricated a cited quote/.test(q)));
+  });
 });
 
 describe('pi-sandbox: QuickJS WASM sandbox containment & limits', () => {

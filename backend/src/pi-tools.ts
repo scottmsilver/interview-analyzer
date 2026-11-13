@@ -715,8 +715,12 @@ const FILLER_PATTERNS: Array<{ label: string; regex: RegExp }> = [
   { label: 'maybe', regex: /\bmaybe\b/gi },
   { label: 'I guess', regex: /\bi guess\b/gi },
   { label: 'probably', regex: /\bprobably\b/gi },
-  // Count conversational filler "like" (preceded by comma or followed by comma/article/hesitation)
-  { label: 'like', regex: /(?:,\s*like\b|\blike\s*,|\blike\s+(?:um|uh|you know|basically|actually)\b)/gi },
+  // Count conversational filler "like" without matching verb "like to" or comparisons "like a/this/that"
+  {
+    label: 'like',
+    regex:
+      /(?:,\s*like\b|\blike\s*,|\blike\s+(?:um|uh|you know|basically|actually|i\s+mean|i\s+guess)\b|\b(?:was|is|it's|that's|and|so|or|yeah)\s+like\s+(?!to\b|a\b|an\b|the\b|this\b|that\b|these\b|those\b))/gi,
+  },
 ];
 
 const SIGNPOST_PHRASES = [
@@ -1499,25 +1503,46 @@ export function verifyEvaluationDraft(
     );
   }
 
-  // Locate Sample Reframes section respecting heading hierarchy (exits on any equal-or-higher heading)
+  // Locate Sample Reframes & Practice Drills sections respecting heading hierarchy (exits on any equal-or-higher heading)
   const sampleReframesBodyLines: string[] = [];
   const inSampleReframesLine = new Set<number>();
+  const inPracticeDrillsLine = new Set<number>();
   let reframeHeadingLevel: number | null = null;
+  let drillsHeadingLevel: number | null = null;
   for (let i = 0; i < lines.length; i += 1) {
     const headingMatch = lines[i].match(/^\s*(#{1,6})\s+(.+)$/);
     if (headingMatch) {
       const level = headingMatch[1].length;
-      if (/^sample\s+reframes\b/i.test(headingMatch[2].trim())) {
+      const headingTitle = headingMatch[2].trim();
+      if (reframeHeadingLevel !== null && level <= reframeHeadingLevel) {
+        reframeHeadingLevel = null;
+      }
+      if (drillsHeadingLevel !== null && level <= drillsHeadingLevel) {
+        drillsHeadingLevel = null;
+      }
+      if (
+        /^(?:(?:part|section)\s+\d+\s*[:.)-]?\s*|\d+[.)]\s*|[ivx]+[.)]\s*)?sample\s+reframes\b/i.test(
+          headingTitle,
+        )
+      ) {
         reframeHeadingLevel = level;
         continue;
       }
-      if (reframeHeadingLevel !== null && level <= reframeHeadingLevel) {
-        reframeHeadingLevel = null;
+      if (
+        /^(?:(?:part|section)\s+\d+\s*[:.)-]?\s*|\d+[.)]\s*|[ivx]+[.)]\s*)?(?:time[- ]boxed\s+)?(?:practice\s+drills|drills\s*(?:&|and)\s*prep\s+artifacts|prep\s+drills|actionable\s+drills)\b/i.test(
+          headingTitle,
+        )
+      ) {
+        drillsHeadingLevel = level;
+        continue;
       }
     }
     if (reframeHeadingLevel !== null) {
       inSampleReframesLine.add(i);
       sampleReframesBodyLines.push(lines[i]);
+    }
+    if (drillsHeadingLevel !== null) {
+      inPracticeDrillsLine.add(i);
     }
   }
 
@@ -1525,17 +1550,29 @@ export function verifyEvaluationDraft(
   const normalizedTranscript = normalizeForQuoteMatch(transcript);
   let verifiedQuoteCount = 0;
   const unverifiedQuotes: string[] = [];
+  let prevNonEmptyLine = '';
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
+    const trimmedLine = line.trim();
+    const isHeadingLine = /^\s*#{1,6}\s+/.test(line);
+    const prevStripped = prevNonEmptyLine.replace(/[*_`>]/g, '').trim();
+    const hasPrescribedPrevLine =
+      !isHeadingLine &&
+      /(?:\bafter\b|\bsays?\s+instead\b|\bdoes\s+(?:instead|differently)\b|\btry(?:\s+saying)?\b|\breframe\b|\brephrase\b|\breplacement(?:\s+(?:script|phrasing|line))?\b|\bscript\b|\bstall\s+phrase\b|\bopening\s+ritual\b|suggested(?:\s+(?:answer|reframe|version|phrasing|response|script))?(?:\s+to\s+[^:]{1,40})?|stronger\s+(?:alternative|version|phrasing|response)|model\s+(?:answer|response)|revised(?:\s+(?:answer|version))?|(?:what\s+a\s+)?(?:strong|bar[- ]raiser)\s+candidate\s+(?:does|says|would\s+say)(?:\s+(?:instead|differently))?)\s*:\s*$/i.test(
+        prevStripped,
+      );
 
     const isPrescribedRewriteLine =
-      /^\s*(?:[-*]|\d+\.)?\s*(?:\*\*)?(?:after|suggested(?:\s+(?:answer|reframe|version|phrasing|response))?|say\s+instead|stronger\s+(?:alternative|version|phrasing|response)|rewrite|model\s+(?:answer|response)|what\s+a\s+strong|what\s+a\s+bar-raiser)\b/i.test(
+      /^\s*(?:[-*]|\d+\.)?\s*(?:\*\*)?(?:after|suggested(?:\s+(?:answer|reframe|version|phrasing|response|script))?|say\s+instead|replacement(?:\s+(?:script|phrasing|line))?|stall\s+phrase|script|stronger\s+(?:alternative|version|phrasing|response)|rewrite|model\s+(?:answer|response)|what\s+a\s+strong\s+candidate\s+(?:does|says)|what\s+a\s+bar-raiser)\b/i.test(
         line,
       );
-    const quoteMatches = line.matchAll(/["“]([^"”\n]{20,300})["”]/g);
+    const quoteMatches = line.matchAll(/“([^"”\n]*)["”]|"([^"\n]*)"/g);
     for (const qm of quoteMatches) {
-      const rawQuote = qm[1].trim();
+      const rawQuote = (qm[1] ?? qm[2] ?? '').trim();
+      if (rawQuote.length < 20 || rawQuote.length > 300) {
+        continue;
+      }
       // If a single line has both "Instead of/Before: "..."" -> "After: "..."" skip only the prescribed rewrite part
       const idx = qm.index ?? 0;
       const prefixBeforeQuote = line.slice(0, idx).toLowerCase().replace(/[*_`]/g, '');
@@ -1546,16 +1583,24 @@ export function verifyEvaluationDraft(
         );
       const hasPrescribedPrefix =
         /(?:->|→)\s*$/.test(prefixBeforeQuote) ||
-        /(?:\bafter\b|\bsays?\s+instead\b|\btry(?:\s+saying)?\b|reframe\b|rephrase\b|could\s+(?:say|answer|open\s+with)|might\s+(?:say|answer)|would\s+say|suggested(?:\s+(?:answer|reframe|version|phrasing|response))?(?:\s+to\s+(?:the\s+)?(?:interviewer|this|that|question(?:\s+\d+)?))?|stronger\s+(?:alternative|version|phrasing|response)|model\s+(?:answer|response)|revised(?:\s+(?:answer|version))?|(?:what\s+a\s+)?bar[- ]raiser(?:\s+(?:candidate(?:\s+would\s+say|\s+says(?:\s+instead)?)?|answer|response|comparison))?)\s*:?\s*$/i.test(
+        /(?:\bafter\b|\bsays?\s+instead\b|\bdoes\s+(?:instead|differently)\b|\btry(?:\s+saying)?\b|\breframe\b|\brephrase\b|\breplacement(?:\s+(?:script|phrasing|line))?\b|\bscript\b|\bstall\s+phrase\b|\bopening\s+ritual\b|could\s+(?:say|answer|open\s+with)|might\s+(?:say|answer)|would\s+say|suggested(?:\s+(?:answer|reframe|version|phrasing|response|script))?(?:\s+to\s+(?:the\s+)?(?:interviewer|this|that|question(?:\s+\d+)?))?|stronger\s+(?:alternative|version|phrasing|response)|model\s+(?:answer|response)|revised(?:\s+(?:answer|version))?|(?:\bwhat\s+a\s+)?(?:strong|bar[- ]raiser)(?:\s+candidate(?:\s+would\s+say|\s+(?:does|says)(?:\s+(?:instead|differently))?)?|\s+(?:answer|response|comparison)))\s*:?\s*$/i.test(
           clauseBeforeQuote,
         );
       const isStandaloneOrLabeledReframeInSection =
         inSampleReframesLine.has(i) &&
         !hasSourceQuotePrefix &&
         !/\b(?:question|prompt)\s*:?\s*$/i.test(clauseBeforeQuote);
+      const isScriptInPracticeDrills =
+        inPracticeDrillsLine.has(i) &&
+        !hasSourceQuotePrefix &&
+        !/\b\d{1,2}:\d{2}\b|\bturn\s*#\s*\d+/i.test(line);
       if (
         hasPrescribedPrefix ||
-        (!hasSourceQuotePrefix && (isPrescribedRewriteLine || isStandaloneOrLabeledReframeInSection))
+        (!hasSourceQuotePrefix &&
+          (isPrescribedRewriteLine ||
+            isStandaloneOrLabeledReframeInSection ||
+            hasPrescribedPrevLine ||
+            isScriptInPracticeDrills))
       ) {
         continue;
       }
@@ -1575,6 +1620,12 @@ export function verifyEvaluationDraft(
           unverifiedQuotes.push(rawQuote);
         }
       }
+    }
+
+    if (isHeadingLine) {
+      prevNonEmptyLine = '';
+    } else if (trimmedLine.length > 0) {
+      prevNonEmptyLine = trimmedLine;
     }
   }
 
@@ -1782,7 +1833,7 @@ export function createAnalyzeTranscriptMetricsTool(
     name: 'analyze_transcript_metrics',
     label: 'Analyze transcript talk metrics',
     description:
-      'Parse the interview transcript to detect timestamp format, valid timestamps, exact per-speaker word counts, candidate vs interviewer talk-to-listen ratio, longest candidate monologues (>=120 words), filler/hedging word counts, "I" vs "we" ownership pronouns, and signposting hits.',
+      'Parse the interview transcript to detect timestamp format, valid timestamps, exact per-speaker word counts, candidate vs interviewer talk-to-listen ratio, longest candidate monologues (>=120 words), filler/hedging word counts, "I" vs "we" ownership pronouns, and signposting hits. Treat word, filler, pronoun, and WPM counts strictly as internal diagnostic signals—report Talk-to-Listen Ratio in the evaluation rather than raw lexical tallies.',
     parameters: schema,
     execute: async (): Promise<AgentToolResult<Record<string, never>>> => {
       const metrics = computeTranscriptMetrics(getTranscript());

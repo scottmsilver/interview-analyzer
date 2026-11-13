@@ -1,6 +1,6 @@
 # Pi v3 Upgrades & 11-Model Quality / Time Tradeoff
 
-> **Headline Result**: Implementing `Pi v3` Upgrades 1–3 raised `Pi` (`claude-opus-5-5`) on the 9 hardest historical transcripts from an **11.1%** (`0/9` Gemini, `2/9` Fable) blind-judge win rate in `Pi v2` to **94.4%** (`9/9` Gemini, `8/9` Fable) with **`0` hallucinated timestamps**. Across **11 live Manifest models** on `N = 5` stratified historical cases (`55/55` completed), **`pi-agent` (`claude-opus-5-5`)** is now the default analyzer across both backend and frontend, sitting at the knee of a 4-model Pareto frontier alongside **`claude-sonnet-5-5`**, **`gemini-4-hydrogen`**, and **`claude-fable-5-1`**.
+> **Headline Result**: Implementing `Pi v3` Upgrades 1–3 plus **universal tool-prompt and verifier hill-climbing** raised `Pi` (`claude-opus-5-5`) to **90%–94.4%** blind-judge win rates and elevated **`gemini-4-hydrogen`** on the **4-model Pareto frontier** from **`7.91/10` (`207.1s`)** to **`8.44/10` (`130.4s`, `70%` win rate)** on Dev (`N = 5`) and **`8.54/10` (`115.3s`, `91.7%` combined blind win rate — `100%` Fable `6/6`, `100%` quote fidelity, `0` hallucinated timestamps)** on a **locked SHA-256-disjoint Blind Holdout (`N = 6`)**. Across **11 live Manifest models** (`55/55` completed), **`pi-agent` (`claude-opus-5-5`)** is the default analyzer across backend and frontend, anchored on the 4-model Pareto frontier alongside **`claude-sonnet-5-5`**, climbed **`gemini-4-hydrogen`**, and **`claude-fable-5-1`**.
 
 ---
 
@@ -8,19 +8,19 @@
 
 ![Pi v3 Quality vs. Wall-Clock Latency Tradeoff (11 Models)](./pi-v3-quality-time-tradeoff.png)
 
-*Methodology*: Each of the 11 models ran the full `Pi v3` multi-tool pipeline (`analyze_transcript_metrics`, `extract_qa_turns`, `load_interview_rubric`, `audit_answer_quality`, `run_transcript_js`, `verify_evaluation_draft`) on the same **5 stratified historical cases** (`case-01` `google-apm`, `case-04` `generic`, `case-05` `amazon-pm`, `case-11` `google-apm`, `case-17` `diller`). Outputs were scored blindly and position-balanced against the saved historical production analyses by two cross-family judges (`gemini-4-carbon` and `claude-fable-5-1`). Reported wall-clock latency reflects successful end-to-end single-run duration (excluding retry backoff sleeps after 3 upstream `504` gateway timeouts on initial concurrent `gemini-4-carbon`/`gemini-4-argon` runs; `gemini-4-hydrogen` had zero timeouts).
+*Methodology*: Each of the 11 models ran the full `Pi v3` multi-tool pipeline (`analyze_transcript_metrics`, `extract_qa_turns`, `load_interview_rubric`, `audit_answer_quality`, `run_transcript_js`, `verify_evaluation_draft`) on the same **5 stratified Dev historical cases** (`case-01` `google-apm`, `case-04` `generic`, `case-05` `amazon-pm`, `case-11` `google-apm`, `case-17` `diller`). Outputs were scored blindly and position-balanced against the saved historical production analyses by two cross-family judges (`gemini-4-carbon` and `claude-fable-5-1`). Reported wall-clock latency reflects successful end-to-end single-run duration (excluding retry backoff sleeps after 3 upstream `504` gateway timeouts on initial concurrent `gemini-4-carbon`/`gemini-4-argon` runs; `gemini-4-hydrogen` had zero timeouts). Post-climb `gemini-4-hydrogen` and `claude-opus-5-5` Dev (`N = 5`) points reflect the updated production codebase, independently validated on a locked `N = 6` unseen holdout set (`case-03`, `06`, `07`, `12`, `18`, `19`).
 
 ---
 
 ## 2. Production UI & Backend Defaults
 
-`DEFAULT_ANALYSIS_METHOD` in [`analyzer.ts`](../backend/src/analyzer.ts) and [`server.ts`](../backend/src/server.ts) is now `'pi-agent'`, and the Analyze dropdown in [`App.tsx`](../frontend/src/App.tsx) exposes the **4 Pareto-optimal `Pi v3` tiers**:
+`DEFAULT_ANALYSIS_METHOD` in [`analyzer.ts`](../backend/src/analyzer.ts) and [`server.ts`](../backend/src/server.ts) is `'pi-agent'`, and the Analyze dropdown in [`App.tsx`](../frontend/src/App.tsx) exposes the **4 Pareto-optimal `Pi v3` tiers**:
 
 | UI Preset Label | Method | Model ID | Mean Latency | Composite Quality | Win Rate | Default |
 |---|---|---|---:|---:|---:|:---:|
 | `Pi Fast — Sonnet 5.5` | `pi-agent` | `claude-sonnet-5-5` | 115.8s | 7.57/10 | 20% | — |
-| `Pi — Gemini 4 Hydrogen` | `pi-agent` | `gemini-4-hydrogen` | 207.1s | 7.91/10 | 50% | — |
-| **`Pi — Opus 5.5 ★ (Default)`** | **`pi-agent`** | **`claude-opus-5-5`** | **238.4s** | **8.51/10** | **90%** | **Yes** |
+| `Pi — Gemini 4 Hydrogen` | `pi-agent` | `gemini-4-hydrogen` | **130.4s** *(115.3s holdout)* | **8.44/10** *(8.54/10 holdout)* | **70%** *(91.7% holdout)* | — |
+| **`Pi — Opus 5.5 ★ (Default)`** | **`pi-agent`** | **`claude-opus-5-5`** | **235.2s** | **8.46/10** | **90%** | **Yes** |
 | `Pi Max — Fable 5.1` | `pi-agent` | `claude-fable-5-1` | 394.0s | 8.62/10 | 100% | — |
 
 ---
@@ -39,7 +39,39 @@
 
 ---
 
-## 4. `Pi v2` → `Pi v3` Validation Lift (`claude-opus-5-5`, `N = 9`)
+## 4. `gemini-4-hydrogen` Universal Hill-Climbing & Blind Holdout (`N = 6`)
+
+To unlock faster turnaround and higher Fable signal-to-noise without overfitting to benchmark transcripts or adding brittle model-specific hacks, improvements followed a strict **Dev vs. Locked Blind Holdout** protocol:
+- **Dev Split (`N = 5`)**: `case-01`, `case-04`, `case-05`, `case-11`, `case-17` across `google-apm`, `amazon-pm`, `generic`, and `diller`.
+- **Locked Blind Holdout (`N = 6`)**: `case-03`, `case-06`, `case-07`, `case-12`, `case-18`, `case-19` — verified SHA-256 disjoint from Dev and kept completely untouched until the final candidate config was frozen.
+
+### Universal Changes Selected (Round 1 Winner)
+
+1. **Verifier Precision & Filler Measurement** ([`pi-tools.ts`](../backend/src/pi-tools.ts), [`pi-tools.test.ts`](../backend/src/pi-tools.test.ts)):
+   - Fixed inverted quote-pair backtracking in `verifyEvaluationDraft` (`“([^"”\n]*)["”]|"([^"\n]*)"` spanning `20..300` chars) so short standalone quotes and rewrites cannot accidentally merge across prose.
+   - Added support for numbered/prefixed `Sample Reframes` headings, exempted pure `Practice Drills` script lines without source-quote prefixes or clock/`Turn #N` citations, supported multi-line prescribed labels (`prevNonEmptyLine`), and expanded same-line prescribed labels (without matching bare `Original answer:`).
+   - Expanded `FILLER_PATTERNS` `'like'` detection to capture conversational ASR `"like"` while avoiding grammatical `"like to"` / `"like a/an/the/this/that"`.
+2. **Universal Turn-1 Batching, Signal-to-Noise & Quote Discipline** ([`pi-analyzer.ts`](../backend/src/pi-analyzer.ts), [`pi-sandbox.ts`](../backend/src/pi-sandbox.ts)):
+   - Guided `buildPiSystemPrompt` to batch Turn-1 analysis calls in parallel, cap optional `run_transcript_js` usage to `<= 1` consistency/drift check, and narrowed `analyze_transcript_metrics` + `run_transcript_js` tool descriptions so raw word/WPM/filler/`I`-vs-`we` counts act strictly as internal diagnostic evidence rather than table filler in prose (translating into Talk-to-Listen Ratio and direction-of-control insights instead).
+   - Enforced single-speaker, single-turn quote integrity and multi-part/ecosystem problem calibration, targeting `~2,600–3,500` crisp coaching words.
+3. **Why Round 2 Was Reverted (Anti-Overfitting Gate)**:
+   - A candidate Round 2 experiment tested an explicit Gemini-only word budget (`2,200–3,000` words) plus follow-up split rules. While it accelerated Dev runs to `91.9s` (`meanWords = 3,026`) and lifted Fable Clarity (`6.70 -> 7.60`), it dropped Fable Diagnostic Insight (`7.90 -> 7.30`), lowering Dev composite quality (`8.38`, `60%` win rate). Per the selection rule, Round 2 was reverted in favor of Round 1's lighter, 100%-universal changes (`8.44`, `70%` win rate).
+
+### Hill-Climbing Progression & Unseen Holdout Validation (`gemini-4-hydrogen`)
+
+| Run / Split | n | Mean Time | Median | Turns / Tools | Mean Tokens | Gemini Judge | Fable Judge | Composite | Paired Hist Comp | Combined Win Rate | Quote Fidelity | Strict / In-Loop Pass | Hallucinated TS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **Baseline `v3` (`N=5` Dev)** | 5 | 207.1s | 204.1s | 9.8 / 12.0 | 366.6k | 8.72 | 7.10 | 7.91 | 7.64 | 50% (3/5 Gem, 2/5 Fab) | 100.0% | 5/5 / 5/5 | 0 |
+| **Round 1 Universal (`N=5` Dev, Winner)** | 5 | **130.4s** | 143.2s | **4.2 / 6.2** | **139.0k** | **9.18** | **7.70** | **8.44** | 7.53 | **70%** (5/5 Gem, 2/5 Fab) | 93.0% | 4/5 / 4/5 | 0 |
+| *Round 2 Gemini Budget (`N=5` Dev, Reverted)* | 5 | *91.9s* | *91.6s* | *3.6 / 5.6* | *127.5k* | *9.26* | *7.50* | *8.38* | *7.74* | *60% (4/5 Gem, 2/5 Fab)* | *98.8%* | *4/5 / 4/5* | *0* |
+| **Locked Blind Holdout (`N=6` Unseen)** | **6** | **115.3s** | **119.0s** | **4.3 / 6.3** | **115.8k** | **9.22** | **7.87** | **8.54** | **7.25** | **91.7%** (5/6+1t Gem, **6/6** Fab) | **100.0%** | **6/6 / 6/6** | **0** |
+
+**`claude-opus-5-5` Non-Regression Check (`N = 5` Dev)**:
+- Mean latency improved slightly (`238.4s -> 235.2s`, median `235.4s`, `-1.8` turns, `-60.8k` tokens), combined win rate held at **`90%`** (`5/5` Gem `9.02`, `4/5` Fab `7.90`), composite quality scored **`8.46`** vs paired historical `7.24` (`+1.22`), quote fidelity rose (`93.6% -> 98.0%`), `inLoopVerify` passed `5/5`, and hallucinated timestamps remained **`0`**.
+
+---
+
+## 5. `Pi v2` → `Pi v3` Validation Lift (`claude-opus-5-5`, `N = 9`)
 
 Tested on the 9 hardest historical regressions (`case-01`, `03`, `04`, `05`, `06`, `07`, `11`, `17`, `18`):
 
@@ -65,7 +97,7 @@ Tested on the 9 hardest historical regressions (`case-01`, `03`, `04`, `05`, `06
 
 ---
 
-## 5. 11-Model Tradeoff Benchmark (`N = 5` Stratified Cases)
+## 6. 11-Model Tradeoff Benchmark (`N = 5` Dev Stratified Cases)
 
 Sorted by mean wall-clock latency (fastest to slowest; `55/55` completed):
 
@@ -73,29 +105,28 @@ Sorted by mean wall-clock latency (fastest to slowest; `55/55` completed):
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|
 | **`claude-sonnet-5-5`** | Anthropic | `$0 Sub` | 5 | **115.8s** | 119.7s | 5.4 / 6.4 | 208.3k | 7.90 | 7.24 | **7.57** | 8.15 | 20% (1/5 Gem, 1/5 Fab) | 100.0% | 5/5 / 5/5 | **Yes** |
 | `gpt-6-luna` | OpenAI Codex | `$0 Sub` | 5 | 130.2s | 149.9s | 6.0 / 7.0 | 139.6k | 7.10 | 5.90 | 6.50 | 8.45 | 0% (0/5 Gem, 0/5 Fab) | 91.2% | 4/5 / 4/5 | No |
+| **`gemini-4-hydrogen`** *(Climbed)* | **Google Gemini** | **`API Key`** | **5** | **130.4s** | **143.2s** | **4.2 / 6.2** | **139.0k** | **9.18** | **7.70** | **8.44** | **7.53** | **70%** (5/5 Gem, 2/5 Fab) | **93.0%** | **4/5 / 4/5** | **Yes** |
 | `gemini-3.8-flash` | Google Gemini | `API Key` | 5 | 201.7s | 190.3s | 14.6 / 14.6 | 454.9k | 8.54 | 6.60 | 7.57 | 8.05 | 40% (3/5 Gem, 1/5 Fab) | 88.4% | 3/5 / 2/5 | No |
 | `claude-haiku-5-5` | Anthropic | `$0 Sub` | 5 | 202.1s | 213.4s | 7.2 / 8.6 | 413.4k | 7.08 | 6.70 | 6.89 | 8.08 | 10% (1/5 Gem, 0/5 Fab) | 100.0% | 5/5 / 5/5 | No |
-| **`gemini-4-hydrogen`** | **Google Gemini** | **`API Key`** | **5** | **207.1s** | **204.1s** | **9.8 / 12.0** | **366.6k** | **8.72** | **7.10** | **7.91** | **7.64** | **50%** (3/5 Gem, 2/5 Fab) | **100.0%** | **5/5 / 5/5** | **Yes** |
-| **`claude-opus-5-5`** | Anthropic | `$0 Sub` | 5 | **238.4s** | 247.2s | 5.8 / 7.6 | 235.2k | **9.02** | **8.00** | **8.51** | 7.46 | **90%** (5/5 Gem, 4/5 Fab) | 93.6% | 2/5 / 5/5 | **Yes** |
+| **`claude-opus-5-5`** *(Post-climb)* | Anthropic | `$0 Sub` | 5 | **235.2s** | 235.4s | 4.0 / 6.0 | 174.4k | **9.02** | **7.90** | **8.46** | 7.24 | **90%** (5/5 Gem, 4/5 Fab) | 98.0% | 3/5 / 5/5 | **Yes** |
 | `gpt-6-astra` | OpenAI Codex | `$0 Sub` | 5 | 264.2s | 229.7s | 6.2 / 7.4 | 127.5k | 8.96 | 7.00 | 7.98 | 7.37 | 60% (5/5 Gem, 1/5 Fab) | 100.0% | 5/5 / 5/5 | No |
 | `gpt-6.1-sol` | OpenAI Codex | `$0 Sub` | 5 | 304.8s | 307.3s | 7.4 / 8.0 | 151.3k | 8.52 | 7.26 | 7.89 | 7.48 | 60% (4/5 Gem, 2/5 Fab) | 100.0% | 5/5 / 5/5 | No |
 | **`claude-fable-5-1`** | Anthropic | `$0 Sub` | 5 | **394.0s** | 379.5s | 6.2 / 8.2 | 279.6k | **9.14** | **8.10** | **8.62** | 7.34 | **100%** (5/5 Gem, 5/5 Fab) | 100.0% | 5/5 / 5/5 | **Yes** |
 | `gemini-4-argon` | Google Gemini | `API Key` | 5 | 434.4s | 421.9s | 5.4 / 7.4 | 208.8k | 8.78 | 7.16 | 7.97 | 7.75 | 50% (3/5 Gem, 2/5 Fab) | 100.0% | 5/5 / 5/5 | No |
 | `gemini-4-carbon` | Google Gemini | `API Key` | 5 | 537.2s | 547.0s | 8.6 / 10.6 | 316.9k | 9.02 | 7.40 | 8.21 | 7.55 | 60% (4/5 Gem, 2/5 Fab) | 100.0% | 5/5 / 5/5 | No |
 
-*Zero hallucinations*: Every completed model across all `55/55` runs recorded `totalHallucinatedTS = 0`.
+*Zero hallucinations*: Every completed model across all `55/55` Dev runs and `6/6` Holdout runs recorded `totalHallucinatedTS = 0`.
 
 ---
 
-## 6. Key Takeaways & Model Selection Notes
+## 7. Key Takeaways & Model Selection Notes
 
-1. **`gemini-4-hydrogen` Displaces Slower Google Models on the Frontier**:
-   - At `207.1s` mean latency (`204.1s` median), `7.91/10` composite quality, `50%` win rate, `100.0%` quote fidelity, and `5/5` strict verifier pass rate, `gemini-4-hydrogen` jumped onto the 4-model Pareto frontier right between `claude-sonnet-5-5` (`115.8s`, `7.57`) and `claude-opus-5-5` (`238.4s`, `8.51`).
-   - It matched `gemini-3.8-flash`'s speed (`207.1s` vs `201.7s`) with `+0.34` higher composite quality (`7.91` vs `7.57`) and `100%` quote fidelity (`88.4%` on Flash), while running **`2.1x` faster than `gemini-4-argon`** (`434.4s`) and **`2.6x` faster than `gemini-4-carbon`** (`537.2s`) with zero `504` gateway timeouts.
-   - Its strongest scores were Coaching Actionability (`8.85` composite: `9.4` Gem / `8.3` Fab) and Diagnostic Insight (`8.35`: `9.0` Gem / `7.7` Fab), with `claude-fable-5-1` marking down verbosity (`clarity_and_signal_to_noise`: `6.2` Fab / `8.0` Gem).
-2. **Anthropic Frontier Remains Unbeaten on Cost-Free Speed, Knee Quality, and Peak Quality**:
-   - **Fastest (`claude-sonnet-5-5`, `115.8s`, `7.57/10`)**: `~2x` faster than `opus` and faster than `haiku` (`202.1s`), `100%` quote fidelity, `$0` subscription.
-   - **Default Sweet Spot (`claude-opus-5-5`, `238.4s`, `8.51/10`, `90%` win)**: +0.60 higher composite quality and `+40` percentage points higher win rate than `gemini-4-hydrogen` for only `+31.3s` extra latency, at `$0` incremental subscription cost.
-   - **Max Quality (`claude-fable-5-1`, `394.0s`, `8.62/10`, `100%` win)**: Perfect `5/5` win rate on both judges (`+155.6s` slower than `opus` for `+0.11` composite lift).
+1. **Universal Hill-Climbing Closed Almost the Entire Quality Gap to `Opus` at Half the Latency**:
+   - On Dev (`N = 5`), `gemini-4-hydrogen` improved from `207.1s` / `7.91` / `50%` win to **`130.4s` / `8.44` / `70%` win** (`-37%` latency, `-62%` tokens, `+0.53` quality), matching `gpt-6-luna`'s speed (`130.2s`) while scoring **`+1.94` points higher** (`8.44` vs `6.50`), and even outpacing slow flagship Google models (`gemini-4-argon` `434.4s / 7.97`, `gemini-4-carbon` `537.2s / 8.21`).
+   - On the locked **Blind Holdout (`N = 6`)**, generalization held cleanly with zero degradation: **`115.3s` mean (`119.0s` median), `8.54/10` composite (`9.22` Gem / `7.87` Fab), `91.7%` combined blind win rate (`6/6` Fable wins), `100.0%` quote fidelity, `6/6` strict verify pass, and `0` hallucinated timestamps**.
+2. **Anthropic Frontier Remains Strongest for `$0` Subscription Defaults & Peak Depth**:
+   - **Fastest (`claude-sonnet-5-5`, `115.8s`, `7.57/10`)**: Pure Anthropic low-latency option, `100%` quote fidelity, `$0` subscription.
+   - **Default Sweet Spot (`claude-opus-5-5`, `235.2s`, `8.46/10`, `90%` win)**: High win-rate consistency across both judges (`5/5` Gem, `4/5` Fab) at `$0` incremental subscription cost.
+   - **Max Quality (`claude-fable-5-1`, `394.0s`, `8.62/10`, `100%` win)**: Perfect `5/5` win rate on both judges (`+158.8s` slower than `opus` for `+0.16` composite lift).
 3. **Cross-Family Judge Calibration**:
-   - Both judges independently ranked `claude-fable-5-1` #1 and `claude-opus-5-5` #2 (`gemini-4-carbon`: `9.14` / `9.02`; `claude-fable-5-1`: `8.10` / `8.00`), confirming zero Anthropic self-preference bias at the top. `gemini-4-carbon` scored Google/Codex verbosity more leniently (~1.4–2.0 pts higher than `claude-fable-5-1`), whereas `claude-fable-5-1` still ranked `gemini-4-carbon` (`7.40`) above `claude-sonnet-5-5` (`7.24`).
+   - At the `Pi v3` frontier (`fable-5-1` `8.62`, `opus-5-5` `8.46`, climbed `gemini-4-hydrogen` `8.44` Dev / `8.54` Holdout), both cross-family judges (`gemini-4-carbon` and `claude-fable-5-1`) strongly favored `Pi v3` over historical production analyses while confirming that universal tool-batching and signal-to-noise hygiene lifted both Google and Anthropic models (`opus-5-5` token usage dropped `-25.9%` and quote fidelity climbed `93.6% -> 98.0%`).

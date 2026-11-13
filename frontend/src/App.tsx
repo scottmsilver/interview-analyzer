@@ -80,8 +80,8 @@ const ANALYSIS_PRESETS: ReadonlyArray<AnalysisPreset> = [
     model: 'gemini-4-hydrogen',
     label: 'Pi — Gemini 4 Hydrogen',
     shortLabel: 'Pi (Gemini 4 Hydrogen)',
-    description: '~3.5 min • 7.9/10 quality, Gemini Pareto',
-    estimatedSeconds: 207,
+    description: '~2 min • 8.4/10 quality (8.5 holdout), Gemini Pareto',
+    estimatedSeconds: 130,
   },
   {
     id: 'pi-opus-5-5',
@@ -90,7 +90,7 @@ const ANALYSIS_PRESETS: ReadonlyArray<AnalysisPreset> = [
     label: 'Pi — Opus 5.5 ★ (Default)',
     shortLabel: 'Pi (Opus 5.5)',
     description: '~4 min • 8.5/10 quality, recommended',
-    estimatedSeconds: 240,
+    estimatedSeconds: 235,
   },
   {
     id: 'pi-fable-5-1',

@@ -203,7 +203,7 @@ export function createRunTranscriptJsTool(
     name: 'run_transcript_js',
     label: 'Run transcript JavaScript analysis',
     description:
-      'Execute deterministic JavaScript in an isolated QuickJS WASM sandbox (64 MiB cap, 512 KiB stack, 1000ms timeout, no FS/network/env) over deep-frozen globals `{ transcript, turns, metrics, qaPairs }` to verify exact word counts, quote matches, pronoun ratios, or timeline math.',
+      'Optional helper: execute deterministic JavaScript in an isolated QuickJS WASM sandbox (64 MiB cap, 512 KiB stack, 1000ms timeout, no FS/network/env) over deep-frozen globals `{ transcript, turns, metrics, qaPairs }` when checking factual consistency across turns (such as numeric drift across retries or timestamp gaps). Do NOT use this tool to compute raw word, filler, or pronoun tallies for the written evaluation.',
     parameters: RunTranscriptJsParamsSchema,
     execute: async (_id, params): Promise<AgentToolResult<Record<string, never>>> => {
       const transcript = getTranscript();
