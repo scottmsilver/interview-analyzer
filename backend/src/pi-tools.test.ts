@@ -529,6 +529,34 @@ Verdict: Borderline
     assert.equal(timeMentionDialogue.turns[0].speaker, 'Interviewer');
     assert.equal(timeMentionDialogue.turns[0].role, 'interviewer');
     assert.match(timeMentionDialogue.turns[0].text, /10:30 AM/);
+
+    // 5. [P2] Ordinary 2-part clock times in dialogue ("from 09:00 to 17:00") must NOT flip verifyEvaluationDraft hasTimestamps to true
+    const proseClockTranscript =
+      'Interviewer: How did you organize support?\nCandidate: We staffed the desk from 09:00 to 17:00 every day.';
+    const fabricatedClockDraft = `
+### Question 1
+- **Score**: 7/10
+- At \`09:00\`, candidate said "We staffed the desk from 09:00 to 17:00 every day".
+- Strength: Clear coverage model.
+- Weakness: Limited escalation metrics.
+
+## Overall Assessment
+- **Overall Score**: 7/10
+- **Pass Verdict**: Yes
+- **Talk-to-Listen Ratio**: 69:31
+- **Top 3 Strengths**: Clear staffing, consistent hours, direct answer.
+- **Top 3 Weaknesses**: Missing SLA target, no volume metric, no handoff detail.
+
+1. Instead of: "We staffed the desk from 09:00 to 17:00 every day" -> After: "Specify p95 first-response SLA."
+2. Before: "We staffed the desk from 09:00 to 17:00 every day" -> After: "Quantify ticket volume per shift."
+3. Before: "How did you organize support?" -> After: "Ask for peak-hour overflow handling."
+4. Before: "staffed the desk from 09:00 to 17:00" -> After: "Cover weekend on-call rotation."
+5. Before: "every day" -> After: "Track backlog carryover rate."
+`;
+    const proseClockRes = verifyEvaluationDraft(proseClockTranscript, fabricatedClockDraft);
+    assert.equal(proseClockRes.summary.hasTimestamps, false);
+    assert.equal(proseClockRes.passed, false);
+    assert.deepEqual(proseClockRes.summary.hallucinatedTimestamps, ['09:00', '17:00']);
   });
 });
 

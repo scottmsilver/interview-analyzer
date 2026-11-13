@@ -1235,6 +1235,15 @@ function extractInlineTranscriptTimestampSecs(transcript: string): number[] {
       ) {
         continue;
       }
+      // Require transcript-offset context so ordinary 2-part clock times in prose ("from 09:00 to 17:00") are ignored
+      const isThreePartHms = rawTs.split(':').length === 3;
+      const isWrapped =
+        (/\($/.test(before) && /^\)/.test(after)) || (/\[$/.test(before) && /^\]/.test(after));
+      const isLineStartOffset =
+        /^(?:[-*•]\s*)?$/.test(before) && !/^\s*(?:to|-|–)\s*\d{1,2}:\d{2}\b/i.test(after);
+      if (!isThreePartHms && !isWrapped && !isLineStartOffset) {
+        continue;
+      }
       const sec = parseTimestampToSec(rawTs);
       if (sec !== null) {
         secs.push(sec);
