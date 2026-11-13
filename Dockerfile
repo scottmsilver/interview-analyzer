@@ -52,6 +52,7 @@ ENV STATIC_DIR=/app/public
 COPY --from=backend-builder --chown=node:node /app/backend/package*.json ./
 COPY --from=backend-builder --chown=node:node /app/backend/node_modules ./node_modules
 COPY --from=backend-builder --chown=node:node /app/backend/dist ./dist
+COPY --from=backend-builder --chown=node:node /app/backend/skills ./skills
 COPY --from=frontend-builder --chown=node:node /app/frontend/dist ./public
 
 USER node

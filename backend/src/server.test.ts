@@ -140,6 +140,28 @@ describe('analyze input validation', () => {
         body: formLargeCriteria
       });
       assert.equal(r2.status, 400);
+
+      const formBadMethod = new FormData();
+      formBadMethod.append('transcript', new Blob(['Candidate answer'], { type: 'text/plain' }), 'test.txt');
+      formBadMethod.append('interviewType', 'google-apm');
+      formBadMethod.append('method', 'unknown-method');
+
+      const r3 = await fetch(`${baseUrl}/api/analyze`, {
+        method: 'POST',
+        body: formBadMethod
+      });
+      assert.equal(r3.status, 400);
+
+      const formBadStreamMethod = new FormData();
+      formBadStreamMethod.append('transcript', new Blob(['Candidate answer'], { type: 'text/plain' }), 'test.txt');
+      formBadStreamMethod.append('interviewType', 'google-apm');
+      formBadStreamMethod.append('method', 'unknown-method');
+
+      const r4 = await fetch(`${baseUrl}/api/analyze/stream`, {
+        method: 'POST',
+        body: formBadStreamMethod
+      });
+      assert.equal(r4.status, 400);
     } finally {
       if (prevToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN;
       else process.env.ANTHROPIC_AUTH_TOKEN = prevToken;

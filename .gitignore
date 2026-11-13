@@ -42,3 +42,5 @@ coverage/
 *.tmp
 .cache/
 .gstack/
+.bakeoff-runs/
+**/.bakeoff-runs/

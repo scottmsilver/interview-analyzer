@@ -4,6 +4,7 @@
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import Anthropic from '@anthropic-ai/sdk';
+import { analyzeInterviewPi } from './pi-analyzer.js';
 
 // Lazy initialization to ensure env vars are loaded
 let anthropic: Anthropic | null = null;
@@ -42,7 +43,17 @@ function getAnthropicClient(): Anthropic {
   return anthropic;
 }
 
-export type AnalysisMethod = 'agent-sdk' | 'direct-api';
+export type AnalysisMethod = 'agent-sdk' | 'direct-api' | 'pi-agent';
+
+export const VALID_ANALYSIS_METHODS: ReadonlySet<AnalysisMethod> = new Set([
+  'agent-sdk',
+  'direct-api',
+  'pi-agent',
+]);
+
+export function isValidAnalysisMethod(value: unknown): value is AnalysisMethod {
+  return typeof value === 'string' && VALID_ANALYSIS_METHODS.has(value as AnalysisMethod);
+}
 
 export const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-5';
 
@@ -887,6 +898,11 @@ export async function analyzeInterviewSync(
   options: AnalysisOptions = { interviewType: 'generic' },
   queryFn: typeof query = query
 ): Promise<string> {
-  const generator = await analyzeInterview(transcript, options, queryFn);
+  const generator =
+    options.method === 'pi-agent'
+      ? await analyzeInterviewPi(transcript, options)
+      : options.method === 'direct-api'
+        ? await analyzeInterviewDirectAPI(transcript, options)
+        : await analyzeInterview(transcript, options, queryFn);
   return collectAnalysisSync(generator);
 }
