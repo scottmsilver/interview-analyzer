@@ -81,7 +81,7 @@ export function createPiModel(
     maxTokens: Math.max(known?.maxTokens ?? DEFAULT_PI_MAX_OUTPUT_TOKENS, DEFAULT_PI_MAX_OUTPUT_TOKENS),
     thinkingLevelMap: known?.thinkingLevelMap,
     compat: {
-      forceAdaptiveThinking: known?.compat?.forceAdaptiveThinking ?? true,
+      forceAdaptiveThinking: known ? known.compat?.forceAdaptiveThinking : true,
       supportsTemperature: false,
     },
   };

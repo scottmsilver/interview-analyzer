@@ -22,6 +22,7 @@ import { runSandboxedTranscriptJs, SANDBOX_MEMORY_CAP_BYTES } from './pi-sandbox
 import {
   createWebFetchTool,
   createWebSearchTool,
+  fetchPublicUrlBounded,
   isPrivateIpAddress,
   performWebFetch,
   performWebSearch,
@@ -454,5 +455,48 @@ describe('pi-web: SSRF guard, web_fetch, and DuckDuckGo CAPTCHA halt', () => {
     assert.equal(okRes.captcha_blocked, undefined);
     assert.equal(okRes.results.length, 1);
     assert.equal(okRes.results[0].url, 'https://example.com/rubric');
+  });
+
+  it('enforces an overall elapsed-time deadline on fetchPublicUrlBounded across slow-drip responses and slow DNS', async () => {
+    const publicResolver = async () => [{ address: '93.184.216.34', family: 4 as const }];
+    const slowDripSrv = await startMockHttpServer((req, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/plain');
+      res.write('chunk-0 ');
+      const iv = setInterval(() => {
+        if (!res.destroyed) {
+          res.write('drip ');
+        }
+      }, 20);
+      req.on('close', () => clearInterval(iv));
+      res.on('close', () => clearInterval(iv));
+    });
+
+    await assert.rejects(
+      () =>
+        fetchPublicUrlBounded('http://example.com/slow-drip', 1024 * 1024, undefined, {
+          timeoutMs: 75,
+          _testResolver: publicResolver,
+          _testConnectOverride: { host: '127.0.0.1', port: slowDripSrv.port },
+        }),
+      /timed out after 75ms/i,
+    );
+
+    let dnsTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await assert.rejects(
+        () =>
+          fetchPublicUrlBounded('http://example.com/slow-dns', 1024 * 1024, undefined, {
+            timeoutMs: 50,
+            _testResolver: () =>
+              new Promise((resolve) => {
+                dnsTimer = setTimeout(() => resolve([{ address: '93.184.216.34', family: 4 }]), 500);
+              }),
+          }),
+        /timed out after 50ms/i,
+      );
+    } finally {
+      if (dnsTimer) clearTimeout(dnsTimer);
+    }
   });
 });

@@ -350,6 +350,18 @@ describe('pi-llm: Manifest URL normalization, mode resolution, and auth', () => 
     assert.equal(finalMsg.stopReason, 'stop');
     assert.equal(new URL(capturedUrl, 'http://localhost').pathname, '/v1/messages');
   });
+
+  it('preserves budget-based thinking on older known models like claude-haiku-4-5 while defaulting adaptive thinking for opus-5-5 and auto', () => {
+    const haiku45 = createPiModel('https://router.example.com', 'claude-haiku-4-5', 'anthropic-messages');
+    assert.equal(haiku45.api, 'anthropic-messages');
+    assert.notEqual((haiku45.compat as { forceAdaptiveThinking?: boolean } | undefined)?.forceAdaptiveThinking, true);
+
+    const opus55 = createPiModel('https://router.example.com', 'claude-opus-5-5', 'anthropic-messages');
+    assert.equal((opus55.compat as { forceAdaptiveThinking?: boolean } | undefined)?.forceAdaptiveThinking, true);
+
+    const autoModel = createPiModel('https://router.example.com', 'auto', 'anthropic-messages');
+    assert.equal((autoModel.compat as { forceAdaptiveThinking?: boolean } | undefined)?.forceAdaptiveThinking, true);
+  });
 });
 
 describe('pi-analyzer: streaming events, tool calls, intermediate text exclusion, Manifest errors', () => {

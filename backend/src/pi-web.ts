@@ -333,7 +333,7 @@ function performPinnedRequest(
 
       if (status >= 300 && status < 400 && location) {
         res.resume();
-        resolvePromise({ status, contentType, headers: responseHeaders, location, buffer: Buffer.alloc(0) });
+        settleResolve({ status, contentType, headers: responseHeaders, location, buffer: Buffer.alloc(0) });
         return;
       }
 
@@ -349,27 +349,72 @@ function performPinnedRequest(
         chunks.push(buf);
       });
       res.on('end', () => {
-        resolvePromise({ status, contentType, headers: responseHeaders, buffer: Buffer.concat(chunks) });
+        settleResolve({ status, contentType, headers: responseHeaders, buffer: Buffer.concat(chunks) });
       });
-      res.on('error', rejectPromise);
+      res.on('error', settleReject);
     }
+
+    let settled = false;
+    const settleResolve = (val: {
+      status: number;
+      contentType: string;
+      headers: Record<string, string>;
+      location?: string;
+      buffer: Buffer;
+    }) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', onAbort);
+      resolvePromise(val);
+    };
+    const settleReject = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', onAbort);
+      rejectPromise(err);
+    };
+    const onAbort = () => {
+      const reason = signal?.reason instanceof Error ? signal.reason : new Error('Aborted');
+      req.destroy(reason);
+      settleReject(reason);
+    };
 
     req.on('timeout', () => {
       req.destroy(new Error(`HTTP request timed out after ${Math.round(timeoutMs / 1000)}s (${endpoint.url.hostname})`));
     });
-    req.on('error', rejectPromise);
+    req.on('error', settleReject);
 
     if (signal) {
       if (signal.aborted) {
-        req.destroy(new Error('Aborted'));
+        onAbort();
         return;
       }
-      signal.addEventListener('abort', () => req.destroy(new Error('Aborted')), { once: true });
+      signal.addEventListener('abort', onAbort, { once: true });
     }
     if (bodyBuf) {
       req.write(bodyBuf);
     }
     req.end();
+  });
+}
+
+function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal, getAbortError: () => Error): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(getAbortError());
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(getAbortError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (val) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(val);
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      },
+    );
   });
 }
 
@@ -386,6 +431,33 @@ export async function fetchPublicUrlBounded(
   buffer: Buffer;
 }> {
   const maxRedirects = fetchOpts.maxRedirects ?? MAX_WEB_REDIRECTS;
+  const totalTimeoutMs = fetchOpts.timeoutMs ?? WEB_FETCH_TIMEOUT_MS;
+  const overallController = new AbortController();
+  let timedOut = false;
+
+  const getAbortError = () =>
+    timedOut
+      ? new Error(`HTTP request timed out after ${totalTimeoutMs}ms (${rawUrl})`)
+      : signal?.reason instanceof Error
+        ? signal.reason
+        : new Error('Aborted');
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    overallController.abort(new Error(`HTTP request timed out after ${totalTimeoutMs}ms (${rawUrl})`));
+  }, totalTimeoutMs);
+
+  const onCallerAbort = () => {
+    overallController.abort(signal?.reason);
+  };
+  if (signal) {
+    if (signal.aborted) {
+      clearTimeout(timer);
+      throw getAbortError();
+    }
+    signal.addEventListener('abort', onCallerAbort, { once: true });
+  }
+
   let currentUrl = rawUrl;
   let currentMethod: 'GET' | 'POST' = fetchOpts.method ?? 'GET';
   let currentBody: string | Buffer | undefined = fetchOpts.body;
@@ -393,44 +465,54 @@ export async function fetchPublicUrlBounded(
     ? { ...fetchOpts.headers }
     : undefined;
 
-  for (let hop = 0; hop <= maxRedirects; hop += 1) {
-    const endpoint = await resolveValidatedPublicEndpoint(currentUrl, fetchOpts._testResolver);
-    const result = await performPinnedRequest(endpoint, maxBytes, signal, {
-      ...fetchOpts,
-      method: currentMethod,
-      body: currentBody,
-      headers: currentHeaders,
-    });
-    if (result.status >= 300 && result.status < 400 && result.location) {
-      if (hop === maxRedirects) {
-        throw new Error(`Exceeded maximum redirects (${maxRedirects}) fetching ${rawUrl}`);
-      }
-      const nextUrl = new URL(result.location, endpoint.url);
-      if (nextUrl.origin !== endpoint.url.origin && currentHeaders) {
-        for (const k of Object.keys(currentHeaders)) {
-          const lower = k.toLowerCase();
-          if (lower === 'authorization' || lower === 'x-subscription-token' || lower === 'cookie') {
-            delete currentHeaders[k];
+  try {
+    for (let hop = 0; hop <= maxRedirects; hop += 1) {
+      const endpoint = await raceWithAbort(
+        resolveValidatedPublicEndpoint(currentUrl, fetchOpts._testResolver),
+        overallController.signal,
+        getAbortError,
+      );
+      const result = await performPinnedRequest(endpoint, maxBytes, overallController.signal, {
+        ...fetchOpts,
+        timeoutMs: totalTimeoutMs,
+        method: currentMethod,
+        body: currentBody,
+        headers: currentHeaders,
+      });
+      if (result.status >= 300 && result.status < 400 && result.location) {
+        if (hop === maxRedirects) {
+          throw new Error(`Exceeded maximum redirects (${maxRedirects}) fetching ${rawUrl}`);
+        }
+        const nextUrl = new URL(result.location, endpoint.url);
+        if (nextUrl.origin !== endpoint.url.origin && currentHeaders) {
+          for (const k of Object.keys(currentHeaders)) {
+            const lower = k.toLowerCase();
+            if (lower === 'authorization' || lower === 'x-subscription-token' || lower === 'cookie') {
+              delete currentHeaders[k];
+            }
           }
         }
+        if (result.status === 301 || result.status === 302 || result.status === 303) {
+          currentMethod = 'GET';
+          currentBody = undefined;
+        }
+        currentUrl = nextUrl.toString();
+        continue;
       }
-      if (result.status === 301 || result.status === 302 || result.status === 303) {
-        currentMethod = 'GET';
-        currentBody = undefined;
-      }
-      currentUrl = nextUrl.toString();
-      continue;
+      return {
+        finalUrl: endpoint.url.toString(),
+        status: result.status,
+        contentType: result.contentType,
+        headers: result.headers,
+        buffer: result.buffer,
+      };
     }
-    return {
-      finalUrl: endpoint.url.toString(),
-      status: result.status,
-      contentType: result.contentType,
-      headers: result.headers,
-      buffer: result.buffer,
-    };
-  }
 
-  throw new Error(`Failed to fetch ${rawUrl}`);
+    throw new Error(`Failed to fetch ${rawUrl}`);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onCallerAbort);
+  }
 }
 
 export function normalizePublicWebUrl(rawHref: string, baseUrl?: string): string | null {
