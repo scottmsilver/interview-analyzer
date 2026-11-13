@@ -282,6 +282,7 @@
 
 /* Shared View Container */
 .shared-view-container {
+  width: 100%;
   max-width: 900px;
   margin: 0 auto;
   padding: 2rem;
@@ -290,20 +291,205 @@
   background: #fafafa;
 }
 
-.shared-view-header {
-  text-align: center;
+.shared-view-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 1rem;
   margin-bottom: 1.5rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.shared-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.shared-brand {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #111;
+}
+
+.shared-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.shared-user-email {
+  font-size: 0.8rem;
+  color: #555;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shared-header-btn,
+.shared-header-signin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.75rem;
+  background: white;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #111;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.shared-header-btn:hover:not(:disabled),
+.shared-header-signin-btn:hover:not(:disabled) {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.shared-header-btn:disabled,
+.shared-header-signin-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .shared-badge {
   display: inline-block;
-  padding: 0.35rem 0.75rem;
+  padding: 0.3rem 0.65rem;
   background: #f0f0f0;
   color: #666;
   border-radius: 4px;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.shared-auth-card {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 2rem;
+  max-width: 520px;
+  margin: 2.5rem auto 0;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.shared-auth-title {
+  margin: 0 0 0.75rem;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #111;
+}
+
+.shared-auth-desc {
+  margin: 0 0 1.5rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: #555;
+  word-break: break-word;
+}
+
+.shared-auth-error {
+  padding: 0.75rem;
+  background: #fee;
+  border: 1px solid #fcc;
+  border-radius: 6px;
+  color: #c33;
+  font-size: 0.85rem;
+  margin-bottom: 1.25rem;
+  text-align: left;
+}
+
+.shared-auth-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.shared-google-signin-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.8rem 1.4rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #111;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.shared-google-signin-btn:hover:not(:disabled) {
+  background: #f9f9f9;
+  border-color: #999;
+}
+
+.shared-google-signin-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.shared-secondary-btn {
+  padding: 0.8rem 1.15rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #555;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.shared-secondary-btn:hover:not(:disabled) {
+  background: #f3f4f6;
+  border-color: #999;
+  color: #111;
+}
+
+.shared-secondary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .shared-view-container {
+    padding: 1rem;
+  }
+
+  .shared-view-topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .shared-topbar-right {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .shared-auth-card {
+    padding: 1.5rem 1.25rem;
+    margin-top: 1.5rem;
+  }
+
+  .shared-google-signin-btn,
+  .shared-secondary-btn {
+    width: 100%;
+  }
 }
 
 /* Share Modal */
