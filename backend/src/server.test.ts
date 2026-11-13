@@ -251,6 +251,20 @@ describe('analyze input validation', () => {
       piStreamForm.append('method', 'pi-agent');
       const rPiStream = await fetch(`${baseUrl}/api/analyze/stream`, { method: 'POST', body: piStreamForm });
       assert.equal(rPiStream.status, 400);
+
+      // Per-request model alone (without PI_LLM_API or ANTHROPIC_MODEL) suffices for pi-agent
+      delete process.env.PI_LLM_API;
+      const piModelForm = new FormData();
+      piModelForm.append('method', 'pi-agent');
+      piModelForm.append('model', 'gpt-6.1-sol');
+      const rPiModel = await fetch(`${baseUrl}/api/analyze`, { method: 'POST', body: piModelForm });
+      assert.equal(rPiModel.status, 400);
+
+      const piClaudeForm = new FormData();
+      piClaudeForm.append('method', 'pi-agent');
+      piClaudeForm.append('model', 'claude-opus-5-5');
+      const rPiClaude = await fetch(`${baseUrl}/api/analyze/stream`, { method: 'POST', body: piClaudeForm });
+      assert.equal(rPiClaude.status, 500);
     } finally {
       if (prevAuthToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN;
       else process.env.ANTHROPIC_AUTH_TOKEN = prevAuthToken;

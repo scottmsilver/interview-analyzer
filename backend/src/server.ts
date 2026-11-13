@@ -14,6 +14,7 @@ import {
   analyzeInterview,
   analyzeInterviewDirectAPI,
   analyzeInterviewSync,
+  type AnalysisMessage,
   AnalysisMethod,
   AnalysisOptions,
   getAnthropicModel,
@@ -301,8 +302,9 @@ export function createApp(deps: ServerDeps = {}) {
         }
         const method: AnalysisMethod =
           rawMethod && isValidAnalysisMethod(rawMethod) ? rawMethod : 'direct-api';
+        const requestedModel = typeof req.body.model === 'string' ? req.body.model : undefined;
 
-        if (!hasLlmCredentials(method)) {
+        if (!hasLlmCredentials(method, requestedModel)) {
           return res.status(500).json({
             error: 'Server configuration error: LLM credentials not configured'
           });
@@ -384,8 +386,19 @@ export function createApp(deps: ServerDeps = {}) {
           }
         }, 15000);
 
+        let clientClosed = false;
+        let activeGenerator: AsyncGenerator<AnalysisMessage> | undefined;
+
         res.on('close', () => {
+          clientClosed = true;
           clearInterval(keepAlive);
+          if (activeGenerator) {
+            try {
+              void activeGenerator.return?.(undefined);
+            } catch {
+              // Ignore cleanup errors on premature client disconnect
+            }
+          }
         });
 
         try {
@@ -396,6 +409,16 @@ export function createApp(deps: ServerDeps = {}) {
               : method === 'pi-agent'
                 ? await analyzeInterviewPi(transcript, { interviewType, cachedCriteria, model })
                 : await analyzeInterviewDirectAPI(transcript, { interviewType, cachedCriteria, model });
+
+          activeGenerator = generator;
+          if (clientClosed) {
+            try {
+              void generator.return?.(undefined);
+            } catch {
+              // Ignore cleanup errors on premature client disconnect
+            }
+            return;
+          }
 
           for await (const message of generator) {
             if (res.destroyed || res.writableEnded) break;
@@ -469,8 +492,9 @@ export function createApp(deps: ServerDeps = {}) {
           });
         }
         const method = rawMethod && isValidAnalysisMethod(rawMethod) ? rawMethod : undefined;
+        const requestedModel = typeof req.body.model === 'string' ? req.body.model : undefined;
 
-        if (!hasLlmCredentials(method)) {
+        if (!hasLlmCredentials(method, requestedModel)) {
           return res.status(500).json({
             error: 'Server configuration error: LLM credentials not configured'
           });

@@ -4,13 +4,15 @@ import assert from 'node:assert/strict';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { AssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream';
-import { collectAnalysisSync } from './analyzer.js';
-import { parseCliArgs, validateBakeoffEnvironment } from './bakeoff.js';
-import { analyzeInterviewPi, type PiRunTelemetry } from './pi-analyzer.js';
+import { collectAnalysisSync, DEFAULT_ANTHROPIC_MODEL, hasLlmCredentials } from './analyzer.js';
+import { DEFAULT_ARMS, parseCliArgs, validateBakeoffEnvironment } from './bakeoff.js';
+import { analyzeInterviewPi, type PiRunTelemetry, resolvePiModelId } from './pi-analyzer.js';
 import {
   createPiModel,
   createPiStreamFn,
   effortFor,
+  inferManifestRoutingHeaders,
+  mergeHeadersCaseInsensitive,
   normalizePiBaseUrl,
   resolvePiApiMode,
 } from './pi-llm.js';
@@ -18,6 +20,7 @@ import {
 const ENV_KEYS = [
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_API_KEY',
+  'ANTHROPIC_MODEL',
   'OPENAI_API_KEY',
   'ANTHROPIC_BASE_URL',
   'MANIFEST_AUTH_TYPE',
@@ -52,13 +55,19 @@ function makeUsage(input = 100, output = 50) {
 }
 
 describe('pi-llm: Manifest URL normalization, mode resolution, and auth', () => {
-  it('resolves apiMode and normalizes baseUrl for anthropic-messages vs openai-completions', () => {
+  it('resolves apiMode and normalizes baseUrl for anthropic-messages, openai-responses, and openai-completions', () => {
     assert.equal(resolvePiApiMode('claude-opus-5'), 'anthropic-messages');
-    assert.equal(resolvePiApiMode('gpt-5.4'), 'openai-completions');
-    assert.equal(resolvePiApiMode('o3-mini'), 'openai-completions');
-    assert.equal(resolvePiApiMode('o1'), 'openai-completions');
-    assert.equal(resolvePiApiMode('o4-mini'), 'openai-completions');
+    assert.equal(resolvePiApiMode('gpt-5.4'), 'openai-responses');
+    assert.equal(resolvePiApiMode('gpt-6.1-sol'), 'openai-responses');
+    assert.equal(resolvePiApiMode('codex-mini'), 'openai-responses');
+    assert.equal(resolvePiApiMode('o3-mini'), 'openai-responses');
+    assert.equal(resolvePiApiMode('o1'), 'openai-responses');
+    assert.equal(resolvePiApiMode('o4-mini'), 'openai-responses');
+    assert.equal(resolvePiApiMode('gemini-4-carbon'), 'openai-completions');
+    assert.equal(resolvePiApiMode('gemma-4-27b'), 'openai-completions');
     assert.equal(resolvePiApiMode('claude-opus-5', 'openai-completions'), 'openai-completions');
+    assert.equal(resolvePiApiMode('claude-opus-5', 'codex'), 'openai-responses');
+    assert.equal(resolvePiApiMode('gpt-6.1-sol', 'chat-completions'), 'openai-completions');
 
     assert.equal(
       normalizePiBaseUrl('https://router.example.com/v1/', 'anthropic-messages'),
@@ -69,13 +78,54 @@ describe('pi-llm: Manifest URL normalization, mode resolution, and auth', () => 
       'https://router.example.com/v1',
     );
     assert.equal(
-      normalizePiBaseUrl('https://router.example.com/v1', 'openai-completions'),
+      normalizePiBaseUrl('https://router.example.com/v1', 'openai-responses'),
       'https://router.example.com/v1',
     );
+    assert.equal(normalizePiBaseUrl('', 'anthropic-messages'), 'https://api.anthropic.com');
+    assert.equal(normalizePiBaseUrl('', 'openai-responses'), 'https://api.openai.com/v1');
 
-    const oaModel = createPiModel('https://router.example.com', 'gpt-5.4');
-    assert.equal(oaModel.api, 'openai-completions');
-    assert.equal(oaModel.baseUrl, 'https://router.example.com/v1');
+    const codexModel = createPiModel('https://router.example.com', 'gpt-6.1-sol');
+    assert.equal(codexModel.api, 'openai-responses');
+    assert.equal(codexModel.baseUrl, 'https://router.example.com/v1');
+    assert.equal(codexModel.contextWindow, 500_000);
+    assert.equal(codexModel.reasoning, true);
+
+    const astraModel = createPiModel('https://router.example.com', 'gpt-6-astra');
+    assert.equal(astraModel.api, 'openai-responses');
+    assert.equal(astraModel.contextWindow, 272_000);
+    assert.equal(astraModel.reasoning, true);
+
+    const geminiModel = createPiModel('https://router.example.com', 'gemini-4-carbon');
+    assert.equal(geminiModel.api, 'openai-completions');
+    assert.equal(geminiModel.contextWindow, 1_048_576);
+    assert.equal(geminiModel.reasoning, true);
+
+    const gemmaModel = createPiModel('https://router.example.com', 'gemma-4-27b');
+    assert.equal(gemmaModel.api, 'openai-completions');
+    assert.equal(gemmaModel.contextWindow, 262_144);
+    assert.equal(gemmaModel.reasoning, true);
+  });
+
+  it('infers Manifest routing headers and enforces api_key for Google models', () => {
+    assert.deepEqual(inferManifestRoutingHeaders('gemini-4-carbon', 'subscription'), {
+      'x-manifest-provider': 'gemini',
+      'x-manifest-auth-type': 'api_key',
+    });
+    assert.deepEqual(inferManifestRoutingHeaders('gemma-4-27b', 'subscription'), {
+      'x-manifest-provider': 'gemini',
+      'x-manifest-auth-type': 'api_key',
+    });
+    assert.deepEqual(inferManifestRoutingHeaders('gpt-6.1-sol', 'subscription'), {
+      'x-manifest-provider': 'openai',
+      'x-manifest-auth-type': 'subscription',
+    });
+    assert.deepEqual(inferManifestRoutingHeaders('codex-mini'), {
+      'x-manifest-provider': 'openai',
+    });
+    assert.deepEqual(inferManifestRoutingHeaders('claude-opus-5-5', 'subscription'), {
+      'x-manifest-auth-type': 'subscription',
+    });
+    assert.deepEqual(inferManifestRoutingHeaders('claude-opus-5-5'), {});
   });
 
   it('uses Bearer auth without x-api-key in anthropic-messages mode when ANTHROPIC_AUTH_TOKEN is set and enables summarized thinking', async () => {
@@ -155,11 +205,13 @@ describe('pi-llm: Manifest URL normalization, mode resolution, and auth', () => 
     assert.equal(capturedBody.output_config?.effort, 'high');
   });
 
-  it('sends Bearer token and optional x-manifest-auth-type in openai-completions mode', async () => {
+  it('sends Bearer token, x-manifest-provider: gemini, and forces x-manifest-auth-type: api_key for Google models in openai-completions mode', async () => {
     let capturedHeaders: http.IncomingHttpHeaders = {};
+    let capturedUrl = '';
 
     const srv = http.createServer((req, res) => {
       capturedHeaders = req.headers;
+      capturedUrl = req.url || '';
       req.resume();
       res.statusCode = 200;
       res.setHeader('Content-Type', 'text/event-stream');
@@ -168,7 +220,7 @@ describe('pi-llm: Manifest URL normalization, mode resolution, and auth', () => 
           id: 'chatcmpl_1',
           object: 'chat.completion.chunk',
           created: 1,
-          model: 'gpt-5.4',
+          model: 'gemini-4-carbon',
           choices: [{ index: 0, delta: { role: 'assistant', content: 'Hello' }, finish_reason: 'stop' }],
           usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
         })}\n\n`,
@@ -183,15 +235,190 @@ describe('pi-llm: Manifest URL normalization, mode resolution, and auth', () => 
     process.env.ANTHROPIC_AUTH_TOKEN = 'test-manifest-token';
     process.env.MANIFEST_AUTH_TYPE = 'subscription';
 
-    const model = createPiModel(`http://127.0.0.1:${port}`, 'gpt-5.4', 'openai-completions');
+    const model = createPiModel(`http://127.0.0.1:${port}`, 'gemini-4-carbon', 'openai-completions');
     const streamFn = createPiStreamFn({ apiMode: 'openai-completions' });
     const stream = await streamFn(model, {
       messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], timestamp: Date.now() }],
     } as Parameters<StreamFn>[1]);
     const finalMsg = await stream.result();
     assert.equal(finalMsg.stopReason, 'stop');
+    assert.equal(new URL(capturedUrl, 'http://localhost').pathname, '/v1/chat/completions');
     assert.equal(capturedHeaders.authorization, 'Bearer test-manifest-token');
+    assert.equal(capturedHeaders['x-manifest-provider'], 'gemini');
+    assert.equal(capturedHeaders['x-manifest-auth-type'], 'api_key');
+
+    // Explicit caller headers win over inferred Manifest routing headers (case-insensitively)
+    const overrideFn = createPiStreamFn({
+      apiMode: 'openai-completions',
+      headers: { 'X-Manifest-Provider': 'openai' },
+    });
+    const overrideStream = await overrideFn(
+      model,
+      {
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], timestamp: Date.now() }],
+      } as Parameters<StreamFn>[1],
+      { headers: { 'X-Manifest-Auth-Type': 'custom-auth' } } as any,
+    );
+    const overrideFinal = await overrideStream.result();
+    assert.equal(overrideFinal.stopReason, 'stop');
+    assert.equal(capturedHeaders['x-manifest-provider'], 'openai');
+    assert.equal(capturedHeaders['x-manifest-auth-type'], 'custom-auth');
+
+    assert.deepEqual(
+      mergeHeadersCaseInsensitive(
+        { 'x-manifest-provider': 'gemini', 'x-manifest-auth-type': 'api_key' },
+        { 'X-Manifest-Provider': 'openai' },
+      ),
+      { 'X-Manifest-Provider': 'openai', 'x-manifest-auth-type': 'api_key' },
+    );
+  });
+
+  it('does not send ANTHROPIC_AUTH_TOKEN or x-manifest-* headers when model.baseUrl is https://api.openai.com/v1', async () => {
+    let seenUrl = '';
+    let seenHeaders: Record<string, string> = {};
+    const mockFetch: typeof fetch = async (input, init) => {
+      seenUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const h = new Headers(init?.headers);
+      seenHeaders = Object.fromEntries(h.entries());
+      const body = [
+        `event: response.created\ndata: ${JSON.stringify({ type: 'response.created', response: { id: 'resp_direct', status: 'in_progress' } })}\n\n`,
+        `event: response.completed\ndata: ${JSON.stringify({ type: 'response.completed', response: { id: 'resp_direct', status: 'completed', output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } })}\n\n`,
+      ].join('');
+      return new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    };
+
+    process.env.ANTHROPIC_AUTH_TOKEN = 'mnfst-should-not-leak-to-openai';
+    process.env.MANIFEST_AUTH_TYPE = 'subscription';
+    process.env.OPENAI_API_KEY = 'sk-openai-direct-only';
+
+    const model = createPiModel('https://api.openai.com/v1', 'gpt-6.1-sol', 'openai-responses');
+    const streamFn = createPiStreamFn({ apiMode: 'openai-responses' });
+    const stream = await streamFn(
+      model,
+      {
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], timestamp: Date.now() }],
+      } as Parameters<StreamFn>[1],
+      { fetch: mockFetch } as any,
+    );
+    const finalMsg = await stream.result();
+    assert.equal(finalMsg.stopReason, 'stop');
+    assert.equal(seenUrl, 'https://api.openai.com/v1/responses');
+    assert.equal(seenHeaders.authorization, 'Bearer sk-openai-direct-only');
+    assert.equal(seenHeaders['x-manifest-provider'], undefined);
+    assert.equal(seenHeaders['x-manifest-auth-type'], undefined);
+
+    // Custom non-OpenAI baseUrl with only ANTHROPIC_API_KEY set preserves ANTHROPIC_API_KEY fallback
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+    delete process.env.MANIFEST_AUTH_TYPE;
+    delete process.env.OPENAI_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-custom-proxy-key';
+    const proxyModel = createPiModel('https://router.example.com/v1', 'gpt-6.1-sol', 'openai-responses');
+    const proxyStream = await streamFn(
+      proxyModel,
+      {
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], timestamp: Date.now() }],
+      } as Parameters<StreamFn>[1],
+      { fetch: mockFetch } as any,
+    );
+    const proxyFinal = await proxyStream.result();
+    assert.equal(proxyFinal.stopReason, 'stop');
+    assert.equal(seenUrl, 'https://router.example.com/v1/responses');
+    assert.equal(seenHeaders.authorization, 'Bearer sk-custom-proxy-key');
+    assert.equal(seenHeaders['x-manifest-provider'], undefined);
+    assert.equal(seenHeaders['x-manifest-auth-type'], undefined);
+  });
+
+  it('dispatches openai-responses to /v1/responses with Manifest OpenAI routing headers and omits Manifest headers for direct OpenAI', async () => {
+    let capturedHeaders: http.IncomingHttpHeaders = {};
+    let capturedUrl = '';
+
+    const srv = http.createServer((req, res) => {
+      capturedHeaders = req.headers;
+      capturedUrl = req.url || '';
+      req.resume();
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/event-stream');
+      const outputItem = {
+        type: 'message',
+        id: 'msg_1',
+        role: 'assistant',
+        status: 'completed',
+        content: [{ type: 'output_text', text: 'OK', annotations: [] }],
+      };
+      res.write(
+        `event: response.created\ndata: ${JSON.stringify({
+          type: 'response.created',
+          response: { id: 'resp_1', status: 'in_progress' },
+        })}\n\n`,
+      );
+      res.write(
+        `event: response.output_item.added\ndata: ${JSON.stringify({
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: { type: 'message', id: 'msg_1', role: 'assistant', content: [] },
+        })}\n\n`,
+      );
+      res.write(
+        `event: response.output_text.delta\ndata: ${JSON.stringify({
+          type: 'response.output_text.delta',
+          output_index: 0,
+          delta: 'OK',
+        })}\n\n`,
+      );
+      res.write(
+        `event: response.output_item.done\ndata: ${JSON.stringify({
+          type: 'response.output_item.done',
+          output_index: 0,
+          item: outputItem,
+        })}\n\n`,
+      );
+      res.write(
+        `event: response.completed\ndata: ${JSON.stringify({
+          type: 'response.completed',
+          response: {
+            id: 'resp_1',
+            status: 'completed',
+            output: [outputItem],
+            usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 },
+          },
+        })}\n\n`,
+      );
+      res.end();
+    });
+    activeServers.push(srv);
+    await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
+    const port = (srv.address() as { port: number }).port;
+
+    process.env.ANTHROPIC_AUTH_TOKEN = 'test-manifest-token';
+    process.env.MANIFEST_AUTH_TYPE = 'subscription';
+
+    const model = createPiModel(`http://127.0.0.1:${port}`, 'gpt-6.1-sol', 'openai-responses');
+    const streamFn = createPiStreamFn({ apiMode: 'openai-responses' });
+    const stream = await streamFn(model, {
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], timestamp: Date.now() }],
+    } as Parameters<StreamFn>[1]);
+    const finalMsg = await stream.result();
+    assert.equal(finalMsg.stopReason, 'stop');
+    assert.equal(new URL(capturedUrl, 'http://localhost').pathname, '/v1/responses');
+    assert.equal(capturedHeaders.authorization, 'Bearer test-manifest-token');
+    assert.equal(capturedHeaders['x-manifest-provider'], 'openai');
     assert.equal(capturedHeaders['x-manifest-auth-type'], 'subscription');
+
+    // Direct OpenAI mode (no Manifest env vars) should not attach x-manifest-* headers
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+    delete process.env.MANIFEST_AUTH_TYPE;
+    process.env.OPENAI_API_KEY = 'sk-direct-openai';
+    const directStream = await streamFn(model, {
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], timestamp: Date.now() }],
+    } as Parameters<StreamFn>[1]);
+    const directFinal = await directStream.result();
+    assert.equal(directFinal.stopReason, 'stop');
+    assert.equal(capturedHeaders.authorization, 'Bearer sk-direct-openai');
+    assert.equal(capturedHeaders['x-manifest-provider'], undefined);
+    assert.equal(capturedHeaders['x-manifest-auth-type'], undefined);
   });
 
   it('respects thinkingLevelMap for claude-opus-5-5 and claude-fable-5-1 and falls back to xhigh when effort maps to null', async () => {
@@ -453,7 +680,7 @@ describe('pi-analyzer: streaming events, tool calls, intermediate text exclusion
     assert.equal(telemetry.usage.inputTokens, 320);
     assert.equal(telemetry.usage.outputTokens, 130);
     assert.equal(telemetry.model, 'gpt-5.4');
-    assert.equal(telemetry.apiMode, 'openai-completions');
+    assert.equal(telemetry.apiMode, 'openai-responses');
 
     const resultEvents = events.filter((e) => e.type === 'result');
     assert.equal(resultEvents.length, 1);
@@ -594,5 +821,55 @@ describe('bakeoff CLI guards', () => {
     assert.deepEqual(parsed.fixturesFilter, ['fixture-b-realistic-apm']);
     assert.equal(parsed.outDir, '/tmp/bakeoff-out');
     assert.equal(parsed.allowDirectKey, true);
+  });
+
+  it('resolvePiModelId allows Codex and Google models without allowUnlistedModel and rejects unlisted overrides', () => {
+    delete process.env.ANTHROPIC_MODEL;
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+
+    for (const model of ['gpt-6.1-sol', 'gpt-6-astra', 'gemini-4-carbon', 'gemini-3.8-flash']) {
+      assert.equal(resolvePiModelId({ interviewType: 'generic', model }), model);
+    }
+
+    assert.equal(
+      resolvePiModelId({ interviewType: 'generic', model: 'rogue-expensive-model' }),
+      DEFAULT_ANTHROPIC_MODEL,
+    );
+    assert.equal(
+      resolvePiModelId({
+        interviewType: 'generic',
+        model: 'rogue-expensive-model',
+        allowUnlistedModel: true,
+      }),
+      'rogue-expensive-model',
+    );
+
+    process.env.ANTHROPIC_MODEL = 'gpt-6.1-sol';
+    assert.equal(
+      resolvePiModelId({ interviewType: 'generic', model: 'rogue-expensive-model' }),
+      'gpt-6.1-sol',
+    );
+  });
+
+  it('hasLlmCredentials recognizes requestedModel for pi-agent with OPENAI_API_KEY only', () => {
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.PI_LLM_API;
+    delete process.env.ANTHROPIC_MODEL;
+    process.env.OPENAI_API_KEY = 'openai-placeholder';
+
+    assert.equal(hasLlmCredentials('pi-agent', 'gpt-6.1-sol'), true);
+    assert.equal(hasLlmCredentials('pi-agent', 'gemini-4-carbon'), true);
+    assert.equal(hasLlmCredentials('pi-agent', 'claude-opus-5-5'), false);
+    assert.equal(hasLlmCredentials('direct-api', 'gpt-6.1-sol'), false);
+  });
+
+  it('includes 8 DEFAULT_ARMS covering Claude, Codex, and Google models', () => {
+    assert.equal(DEFAULT_ARMS.length, 8);
+    const ids = new Set(DEFAULT_ARMS.map((a) => a.id));
+    assert.ok(ids.has('pi-agent-codex-gpt-6-1-sol'));
+    assert.ok(ids.has('pi-agent-codex-gpt-6-astra'));
+    assert.ok(ids.has('pi-agent-gemini-4-carbon'));
+    assert.ok(ids.has('pi-agent-gemini-3-8-flash'));
   });
 });

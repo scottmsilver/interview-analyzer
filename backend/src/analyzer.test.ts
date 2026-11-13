@@ -84,6 +84,19 @@ describe('analyzer credentials and client setup', () => {
     process.env.ANTHROPIC_MODEL = 'gpt-5.4';
     assert.equal(hasLlmCredentials('direct-api'), false);
     assert.equal(hasLlmCredentials('pi-agent'), true);
+
+    process.env.ANTHROPIC_MODEL = 'gemini-4-carbon';
+    assert.equal(hasLlmCredentials('pi-agent'), true);
+
+    process.env.ANTHROPIC_MODEL = 'codex-mini';
+    assert.equal(hasLlmCredentials('pi-agent'), true);
+
+    delete process.env.ANTHROPIC_MODEL;
+    for (const mode of ['openai-responses', 'responses', 'codex', 'chat-completions']) {
+      process.env.PI_LLM_API = mode;
+      assert.equal(hasLlmCredentials('pi-agent'), true);
+      assert.equal(hasLlmCredentials('direct-api'), false);
+    }
   });
 
   it('createAnthropicClient uses bearer auth with apiKey: null when ANTHROPIC_AUTH_TOKEN is set', () => {

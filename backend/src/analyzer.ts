@@ -4,15 +4,25 @@
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import Anthropic from '@anthropic-ai/sdk';
-import { analyzeInterviewPi } from './pi-analyzer.js';
 
 // Lazy initialization to ensure env vars are loaded
 let anthropic: Anthropic | null = null;
 
+const PI_OPENAI_API_MODES: ReadonlySet<string> = new Set([
+  'openai-responses',
+  'responses',
+  'codex',
+  'openai-completions',
+  'openai',
+  'chat-completions',
+]);
+
+const OPEN_AI_OR_GOOGLE_MODEL_RE = /^(?:gpt-|o1(?:$|[-_.])|o3(?:$|[-_.])|o4(?:$|[-_.])|codex-|gemini-|gemma-)/;
+
 /**
  * Check whether any supported LLM credential is configured for the given analysis method.
  */
-export function hasLlmCredentials(method?: AnalysisMethod): boolean {
+export function hasLlmCredentials(method?: AnalysisMethod, requestedModel?: string): boolean {
   if (process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY) {
     return true;
   }
@@ -20,10 +30,11 @@ export function hasLlmCredentials(method?: AnalysisMethod): boolean {
   if (method === 'pi-agent' && process.env.OPENAI_API_KEY) {
     const piApi = (process.env.PI_LLM_API || '').trim().toLowerCase();
     const envModel = (process.env.ANTHROPIC_MODEL || '').trim().toLowerCase();
+    const reqModel = (requestedModel || '').trim().toLowerCase();
     return (
-      piApi === 'openai-completions' ||
-      piApi === 'openai' ||
-      /^(?:gpt-|o1(?:$|[-_.])|o3(?:$|[-_.])|o4(?:$|[-_.]))/.test(envModel)
+      PI_OPENAI_API_MODES.has(piApi) ||
+      OPEN_AI_OR_GOOGLE_MODEL_RE.test(envModel) ||
+      OPEN_AI_OR_GOOGLE_MODEL_RE.test(reqModel)
     );
   }
 
@@ -918,7 +929,7 @@ export async function analyzeInterviewSync(
 ): Promise<string> {
   const generator =
     options.method === 'pi-agent'
-      ? await analyzeInterviewPi(transcript, options)
+      ? await (await import('./pi-analyzer.js')).analyzeInterviewPi(transcript, options)
       : options.method === 'direct-api'
         ? await analyzeInterviewDirectAPI(transcript, options)
         : await analyzeInterview(transcript, options, queryFn);

@@ -1,8 +1,10 @@
 import { Agent, type AgentEvent, type StreamFn } from '@earendil-works/pi-agent-core';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import {
+  ALLOWED_ANTHROPIC_MODELS,
   type AnalysisMessage,
   type AnalysisOptions,
+  DEFAULT_ANTHROPIC_MODEL,
   detectManifestError,
   getAnthropicModel,
   takeSentences,
@@ -152,11 +154,49 @@ REQUIRED EVALUATION WORKFLOW:
 7. In your final assistant turn (after all tool calls finish), output ONLY the final verified Markdown evaluation with no preamble or tool narration.`;
 }
 
-function resolvePiModelId(options: PiAnalysisOptions): string {
-  if (options.allowUnlistedModel && options.model && options.model.trim()) {
-    return options.model.trim();
+export const ALLOWED_PI_MODELS: ReadonlySet<string> = new Set([
+  ...ALLOWED_ANTHROPIC_MODELS,
+  // Codex
+  'gpt-6.1-sol',
+  'gpt-6.1-terra',
+  'gpt-6-astra',
+  'gpt-6-sol',
+  'gpt-6-luna',
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
+  // Google
+  'gemini-4-carbon',
+  'gemini-4-argon',
+  'gemini-3.8-flash',
+  'gemini-3.7-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-3.1-pro-preview',
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+]);
+
+export function resolvePiModelId(options: PiAnalysisOptions): string {
+  const candidate = options.model?.trim();
+  if (candidate) {
+    if (options.allowUnlistedModel || ALLOWED_PI_MODELS.has(candidate)) {
+      return candidate;
+    }
+    const fallback =
+      process.env.ANTHROPIC_MODEL?.trim() ||
+      (process.env.ANTHROPIC_AUTH_TOKEN ? 'auto' : DEFAULT_ANTHROPIC_MODEL);
+    console.warn(
+      `[pi-analyzer] Ignoring unsupported model override "${candidate}"; using "${fallback}". ` +
+        `Allowed: ${[...ALLOWED_PI_MODELS].join(', ')}`,
+    );
+    return fallback;
   }
-  return getAnthropicModel(options.model);
+  const envModel = process.env.ANTHROPIC_MODEL?.trim();
+  if (envModel) {
+    return envModel;
+  }
+  return getAnthropicModel();
 }
 
 function extractTextFromAssistantMessage(msg: AssistantMessage): string {
@@ -181,7 +221,7 @@ export async function analyzeInterviewPi(
   const baseUrl =
     options.baseUrl ??
     process.env.ANTHROPIC_BASE_URL ??
-    (apiMode === 'openai-completions' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com');
+    (apiMode === 'anthropic-messages' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1');
 
   const model = createPiModel(baseUrl, modelId, apiMode);
   const streamFn = customStreamFn ?? createPiStreamFn({ apiMode });
