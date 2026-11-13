@@ -466,6 +466,61 @@ Verdict: Borderline
     assert.equal(periodicFail.passed, false);
     assert.deepEqual(periodicFail.summary.hallucinatedTimestamps, ['00:25:00']);
   });
+
+  it('preserves brief (<15w) 2-speaker interviewers, keeps short Candidate openings, and guards multi-heading note transcripts', () => {
+    // 1. [P2] Brief (<15 words) interviewer with >= 100 word candidate in 2-speaker inference
+    const briefInterviewerTranscript = [
+      'Alex: Tell me about a product failure you owned?',
+      'Sam: I led a search ranking migration where we shipped a semantic query rewriter without a proper click-through guardrail across long-tail queries. Over the first forty-eight hours, zero-result rates rose slightly while reformulation latency jumped by ninety milliseconds on older mobile devices. As soon as our alerting flagged the latency regression, I rolled back the feature flag, isolated the bottleneck to uncached synonym expansion, and partnered with our search infra lead to add a precomputed cache tier and a strict latency budget before re-enabling the rollout at five percent traffic.',
+    ].join('\n');
+    const briefMetrics = computeTranscriptMetrics(briefInterviewerTranscript);
+    assert.equal(briefMetrics.interviewerTurns, 1);
+    assert.equal(briefMetrics.candidateTurns, 1);
+    assert.ok(briefMetrics.candidateTalkRatioPct > 85);
+
+    // 2. [P2] Short candidate openings at top of transcript are NOT dropped as metadata
+    for (const opening of [
+      'Candidate: Absolutely\nInterviewer: Great, let us begin.',
+      'Candidate: Not really\nInterviewer: Let me clarify the prompt.',
+      '**Candidate:** Absolutely\n**Interviewer:** Great, let us begin.',
+    ]) {
+      const p = parseTranscript(opening);
+      assert.equal(p.turns.length, 2, `Expected 2 turns for opening: ${opening}`);
+      assert.equal(p.turns[0].speaker, 'Candidate');
+      assert.equal(p.turns[0].role, 'candidate');
+    }
+
+    // 3. Multi-heading structured notes + >3-word dash-timestamped note titles do not explode interviewer turns
+    const noteHeavyTranscript = [
+      '01:10 - Architecture Deep Dive and Scaling Plan: Candidate walked through sharding strategy and cache invalidation across regional clusters.',
+      '03:45 - Cross Functional Stakeholder Alignment: Coordinated legal, support, and engineering teams on phased launch milestones.',
+      'Candidate: One lesson I learned was to validate edge-case rollback latency before broad launch.',
+      'Problem Framing: Defined target users and latency goals clearly across mobile and web endpoints during the initial scoping block.',
+      'Solution Tradeoffs: Compared synchronous validation versus asynchronous queue processing under peak traffic conditions.',
+      'System Design: Partitioned event streams by tenant key with bounded retry queues and idempotent consumers.',
+      'User Journey: Walked through first-time onboarding, error recovery states, and offline sync resolution flows.',
+      'Data Model: Separated hot session state from analytical audit logs with TTL retention policies.',
+      'Metrics Discussion: Proposed North Star task completion rate paired with p95 error-rate and support-ticket guardrails.',
+    ].join('\n');
+    const notesParsed = parseTranscript(noteHeavyTranscript);
+    assert.equal(
+      notesParsed.turns.some((t) => t.speaker === 'Architecture Deep Dive and Scaling Plan'),
+      false,
+    );
+    assert.equal(
+      notesParsed.turns.some((t) => t.speaker === 'Problem Framing' || t.speaker === 'Metrics Discussion'),
+      false,
+    );
+    assert.equal(
+      notesParsed.turns.some((t) => t.timestampFormatted === '00:01:10'),
+      true,
+    );
+    assert.equal(
+      notesParsed.turns.filter((t) => t.role === 'interviewer').length,
+      0,
+      'Must not bulk-infer multi-heading note sections as interviewer',
+    );
+  });
 });
 
 describe('pi-sandbox: QuickJS WASM sandbox containment & limits', () => {

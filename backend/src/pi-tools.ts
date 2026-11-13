@@ -196,7 +196,7 @@ const METADATA_HEADER_KEY_RE =
   /^(?:(?:program|date|interview\s+date|interviewers|duration|location|role|position|overall\s+score|title|summary|scorecard|topic|subject|attendees?|participants?|meeting|session|company|recording|transcript)\b|interviewer\(s\))/i;
 
 const PROSE_COLON_PREFIX_RE =
-  /^(?:note|notes|first|second|third|example|e\.?g|step|steps|option|options|metric|metrics|question|questions|answer|answers|strength|strengths|weakness|weaknesses|verdict|before|after|instead\s+of|takeaway|takeaways|key\s+takeaways?)\b/i;
+  /^(?:note|notes|first|second|third|example|e\.?g|step|steps|option|options|metric|metrics|question|questions|answer|answers|strength|strengths|weakness|weaknesses|verdict|before|after|instead\s+of|takeaway|takeaways|key\s+takeaways?|overview|background|context|problem|goal|goals|recommendation|recommendations|feedback|pros|cons|risk|risks|timeline|next\s+steps?|action\s+items?|follow[- ]?ups?|rubric|scores?|rating|evaluation|calibration|observations?|highlights?|concerns?|conclusion)\b/i;
 
 function normalizeSpeakerPrefixLine(line: string): { normalized: string; hadEmphasis: boolean } {
   // "**Speaker:** text", "*Speaker:* text", "__Speaker:__ text"
@@ -217,31 +217,39 @@ function isCandidateMetadataHeader(
   value: string,
   isAtTop: boolean,
   hadEmphasis: boolean,
+  nextLineIsMetadata = false,
 ): boolean {
   if (speaker.trim().toLowerCase() !== 'candidate') return false;
-  if (!isAtTop && !hadEmphasis) return false;
+  if (!isAtTop) return false;
   const trimmedVal = value.trim();
   const words = countWords(trimmedVal);
   if (words === 0 || words > 5) return false;
-  if (/[?!]$/.test(trimmedVal)) return false;
-  if (!hadEmphasis && /\.$/.test(trimmedVal)) return false;
-  if (
-    /\b(?:hi|hello|hey|yes|yeah|sure|thanks|thank you|ready|great|good|let's|i|i'm|i'd|we)\b/i.test(
-      trimmedVal,
-    )
-  ) {
-    return false;
-  }
-  return true;
+  if (/[?!.,]$/.test(trimmedVal)) return false;
+  if (nextLineIsMetadata) return true;
+  if (!hadEmphasis) return false;
+  // With markdown emphasis at top of doc (e.g. "**Candidate:** Jordan Lee"), match only Title-Case names or ID tags
+  return /^(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}|[A-Z]{1,4}[-_]?\d+|Anonymous|Redacted|N\/A|TBD)$/.test(
+    trimmedVal,
+  );
 }
 
-function isTopHeaderNoise(line: string): boolean {
+function isMetadataKeyLine(line: string): boolean {
+  const { normalized } = normalizeSpeakerPrefixLine(line);
+  const kv = normalized.match(/^([A-Za-z][A-Za-z0-9 ._()/-]{0,40}?)\s*:\s*(?!\/\/)(.*)$/);
+  return Boolean(kv && METADATA_HEADER_KEY_RE.test(kv[1].trim()));
+}
+
+function isTopHeaderNoise(line: string, nextNonEmptyLine?: string): boolean {
   const { normalized, hadEmphasis } = normalizeSpeakerPrefixLine(line);
   const kv = normalized.match(/^([A-Za-z][A-Za-z0-9 ._()/-]{0,40}?)\s*:\s*(?!\/\/)(.*)$/);
   if (kv) {
     const key = kv[1].trim();
     const val = kv[2] ?? '';
-    if (METADATA_HEADER_KEY_RE.test(key) || isCandidateMetadataHeader(key, val, true, hadEmphasis)) {
+    const nextIsMeta = nextNonEmptyLine ? isMetadataKeyLine(nextNonEmptyLine) : false;
+    if (
+      METADATA_HEADER_KEY_RE.test(key) ||
+      isCandidateMetadataHeader(key, val, true, hadEmphasis, nextIsMeta)
+    ) {
       return true;
     }
   }
@@ -267,11 +275,18 @@ function isSpeakerMetadataGuard(
   textAfterColon: string,
   isAtTop: boolean,
   hadEmphasis: boolean,
+  nextLineIsMetadata = false,
 ): boolean {
   return (
     METADATA_HEADER_KEY_RE.test(candidateSpeaker) ||
     PROSE_COLON_PREFIX_RE.test(candidateSpeaker) ||
-    isCandidateMetadataHeader(candidateSpeaker, textAfterColon, isAtTop, hadEmphasis)
+    isCandidateMetadataHeader(
+      candidateSpeaker,
+      textAfterColon,
+      isAtTop,
+      hadEmphasis,
+      nextLineIsMetadata,
+    )
   );
 }
 
@@ -328,13 +343,21 @@ export function parseTranscript(transcript: string): ParsedTranscript {
   const standaloneTsRe = /^\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?$/;
   const transcriptionEndedRe = /^Transcription ended after\s+(\d{1,2}:\d{2}(?::\d{2})?)\b/i;
 
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx += 1) {
+    const line = lines[lineIdx].trim();
     if (!line) continue;
     if (line === 'WEBVTT' || /^\d+$/.test(line)) {
       if (line === 'WEBVTT') setFormat('vtt');
       continue;
     }
+
+    const findNextNonEmptyLine = (): string | undefined => {
+      for (let j = lineIdx + 1; j < lines.length; j += 1) {
+        const next = lines[j].trim();
+        if (next) return next;
+      }
+      return undefined;
+    };
 
     let m: RegExpMatchArray | null;
     if ((m = line.match(transcriptionEndedRe))) {
@@ -375,7 +398,7 @@ export function parseTranscript(transcript: string): ParsedTranscript {
       !currentTurn &&
       !activeSectionTimestamp &&
       !pendingVttTimestamp &&
-      isTopHeaderNoise(line)
+      isTopHeaderNoise(line, findNextNonEmptyLine())
     ) {
       continue;
     }
@@ -390,7 +413,13 @@ export function parseTranscript(transcript: string): ParsedTranscript {
           if (spkMatch) {
             const spk = spkMatch[1].trim();
             const textAfter = spkMatch[2] || '';
-            if (!isSpeakerMetadataGuard(spk, textAfter, turns.length === 0 && !currentTurn, hadEmphasis)) {
+            const isAtTop = turns.length === 0 && !currentTurn;
+            const validSpeakerWordCount =
+              spk.split(/\s+/).length <= 3 || classifySpeakerRole(spk) !== 'other';
+            if (
+              validSpeakerWordCount &&
+              !isSpeakerMetadataGuard(spk, textAfter, isAtTop, hadEmphasis)
+            ) {
               pushCurrent();
               setFormat(pat.fmt(m[1]));
               currentTurn = {
@@ -407,6 +436,22 @@ export function parseTranscript(transcript: string): ParsedTranscript {
               matchedTimestamped = true;
               break;
             }
+            // Timestamped prose/heading line (not a valid speaker): preserve timestamp as 'Speaker' turn
+            pushCurrent();
+            setFormat(pat.fmt(m[1]));
+            currentTurn = {
+              turnIndex: turns.length + 1,
+              speaker: 'Speaker',
+              role: 'other',
+              rawTimestamp: m[1],
+              timestampFormatted: formatSecAsHms(sec),
+              timestampSec: sec,
+              text: m[2].trim(),
+            };
+            pendingVttTimestamp = null;
+            activeSectionTimestamp = null;
+            matchedTimestamped = true;
+            break;
           }
         }
       }
@@ -443,11 +488,13 @@ export function parseTranscript(transcript: string): ParsedTranscript {
       const hasTextOrExplicitRole =
         textAfterColon.trim().length > 0 || classifySpeakerRole(candidateSpeaker) !== 'other';
       const isAtTop = turns.length === 0 && !currentTurn;
+      const nextLine = findNextNonEmptyLine();
+      const nextIsMeta = nextLine ? isMetadataKeyLine(nextLine) : false;
       // Avoid splitting prose sentences containing colons like "First: we should..." or metadata headers
       const looksLikeSpeaker =
         hasTextOrExplicitRole &&
         candidateSpeaker.split(/\s+/).length <= 3 &&
-        !isSpeakerMetadataGuard(candidateSpeaker, textAfterColon, isAtTop, hadEmphasis);
+        !isSpeakerMetadataGuard(candidateSpeaker, textAfterColon, isAtTop, hadEmphasis, nextIsMeta);
       if (looksLikeSpeaker) {
         pushCurrent();
         const ts = pendingVttTimestamp ?? activeSectionTimestamp;
@@ -516,19 +563,33 @@ export function parseTranscript(transcript: string): ParsedTranscript {
     speakerStatsMap.set(turn.speaker, entry);
   }
 
-  const realSpeakers = Array.from(speakerStatsMap.values()).filter(
+  const allNamedSpeakers = Array.from(speakerStatsMap.values());
+  const substantiveSpeakers = allNamedSpeakers.filter(
     (s) => totalDialogueWords < 100 || s.words >= 15,
   );
+  // Preserve brief speakers (e.g. concise <15-word interviewer) when there are exactly 2 named speakers
+  const realSpeakers =
+    substantiveSpeakers.length < 2 && allNamedSpeakers.length === 2
+      ? allNamedSpeakers
+      : substantiveSpeakers;
   const realSpeakerSet = new Set(realSpeakers.map((s) => s.speaker));
 
   const hasExplicitInterviewer = turns.some((t) => t.role === 'interviewer');
   const hasExplicitCandidate = turns.some((t) => t.role === 'candidate');
 
   if (hasExplicitInterviewer !== hasExplicitCandidate) {
-    const inferredRole: SpeakerRole = hasExplicitInterviewer ? 'candidate' : 'interviewer';
-    for (const turn of turns) {
-      if (turn.role === 'other' && realSpeakerSet.has(turn.speaker)) {
-        turn.role = inferredRole;
+    const otherRealSpeakers = realSpeakers.filter((s) => s.role === 'other');
+    const allOtherNamedSpeakers = allNamedSpeakers.filter((s) => s.role === 'other');
+    if (
+      otherRealSpeakers.length >= 1 &&
+      otherRealSpeakers.length <= 2 &&
+      allOtherNamedSpeakers.length <= 3
+    ) {
+      const inferredRole: SpeakerRole = hasExplicitInterviewer ? 'candidate' : 'interviewer';
+      for (const turn of turns) {
+        if (turn.role === 'other' && realSpeakerSet.has(turn.speaker)) {
+          turn.role = inferredRole;
+        }
       }
     }
   } else if (!hasExplicitInterviewer && !hasExplicitCandidate && realSpeakers.length >= 2) {
