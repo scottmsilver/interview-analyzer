@@ -520,6 +520,15 @@ Verdict: Borderline
       0,
       'Must not bulk-infer multi-heading note sections as interviewer',
     );
+
+    // 4. [P2] Opening dialogue mentioning time-of-day must NOT be dropped by isTopHeaderNoise
+    const timeMentionDialogue = parseTranscript(
+      'Interviewer: We have until 10:30 AM. Tell me about yourself.\nCandidate: I am a product manager.',
+    );
+    assert.equal(timeMentionDialogue.turns.length, 2);
+    assert.equal(timeMentionDialogue.turns[0].speaker, 'Interviewer');
+    assert.equal(timeMentionDialogue.turns[0].role, 'interviewer');
+    assert.match(timeMentionDialogue.turns[0].text, /10:30 AM/);
   });
 });
 

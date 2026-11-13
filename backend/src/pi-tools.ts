@@ -252,6 +252,13 @@ function isTopHeaderNoise(line: string, nextNonEmptyLine?: string): boolean {
     ) {
       return true;
     }
+    // Never drop an explicit or valid speaker dialogue line just because it mentions a time or date
+    if (
+      classifySpeakerRole(key) !== 'other' ||
+      (key.split(/\s+/).length <= 3 && !PROSE_COLON_PREFIX_RE.test(key))
+    ) {
+      return false;
+    }
   }
   if (countWords(line) <= 12) {
     const stripped = line.replace(/[*_]/g, '').trim();
