@@ -117,7 +117,7 @@ body {
   box-shadow: 0 4px 12px rgba(0,0,0,0.1);
   z-index: 100;
   overflow: hidden;
-  min-width: 180px;
+  min-width: 260px;
 }
 
 .method-option {
@@ -141,8 +141,8 @@ body {
   background: #f0f0f0;
 }
 
-.method-option:first-child {
-  border-bottom: 1px solid #eee;
+.method-option + .method-option {
+  border-top: 1px solid #eee;
 }
 
 .method-name {

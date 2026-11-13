@@ -17,6 +17,7 @@ import {
   type AnalysisMessage,
   AnalysisMethod,
   AnalysisOptions,
+  DEFAULT_ANALYSIS_METHOD,
   getAnthropicModel,
   hasLlmCredentials,
   isValidAnalysisMethod,
@@ -293,7 +294,7 @@ export function createApp(deps: ServerDeps = {}) {
     upload.single('transcript'),
     async (req: Request, res: Response) => {
       try {
-        // Get and validate analysis method (default to direct-api for speed)
+        // Get and validate analysis method (default to pi-agent)
         const rawMethod = req.body.method as unknown;
         if (rawMethod !== undefined && rawMethod !== '' && !isValidAnalysisMethod(rawMethod)) {
           return res.status(400).json({
@@ -301,7 +302,7 @@ export function createApp(deps: ServerDeps = {}) {
           });
         }
         const method: AnalysisMethod =
-          rawMethod && isValidAnalysisMethod(rawMethod) ? rawMethod : 'direct-api';
+          rawMethod && isValidAnalysisMethod(rawMethod) ? rawMethod : DEFAULT_ANALYSIS_METHOD;
         const requestedModel = typeof req.body.model === 'string' ? req.body.model : undefined;
 
         if (!hasLlmCredentials(method, requestedModel)) {
@@ -491,7 +492,8 @@ export function createApp(deps: ServerDeps = {}) {
             error: `Invalid method. Allowed: ${[...VALID_ANALYSIS_METHODS].join(', ')}`
           });
         }
-        const method = rawMethod && isValidAnalysisMethod(rawMethod) ? rawMethod : undefined;
+        const method: AnalysisMethod =
+          rawMethod && isValidAnalysisMethod(rawMethod) ? rawMethod : DEFAULT_ANALYSIS_METHOD;
         const requestedModel = typeof req.body.model === 'string' ? req.body.model : undefined;
 
         if (!hasLlmCredentials(method, requestedModel)) {
@@ -544,7 +546,7 @@ export function createApp(deps: ServerDeps = {}) {
           interviewType,
           cachedCriteria,
           model,
-          ...(method ? { method } : {})
+          method,
         });
 
         res.json({

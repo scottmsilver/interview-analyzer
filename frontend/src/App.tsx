@@ -54,15 +54,53 @@ interface RawProgressMessage {
   }
 }
 
-const ANALYSIS_METHODS: ReadonlyArray<{
-  value: AnalysisMethod
+interface AnalysisPreset {
+  id: string
+  method: AnalysisMethod
+  model: string
   label: string
+  shortLabel: string
   description: string
   estimatedSeconds: number
-}> = [
-  { value: 'direct-api', label: 'Fast', description: '~45 seconds, web search', estimatedSeconds: 60 },
-  { value: 'agent-sdk', label: 'Deep', description: '~2 minutes, thorough research', estimatedSeconds: 120 },
-  { value: 'pi-agent', label: 'Pi Agent', description: '~60-90s, transcript tools + rubrics', estimatedSeconds: 90 },
+}
+
+const ANALYSIS_PRESETS: ReadonlyArray<AnalysisPreset> = [
+  {
+    id: 'pi-sonnet-5-5',
+    method: 'pi-agent',
+    model: 'claude-sonnet-5-5',
+    label: 'Pi Fast — Sonnet 5.5',
+    shortLabel: 'Pi Fast (Sonnet 5.5)',
+    description: '~2 min • 7.6/10 quality, tool-verified',
+    estimatedSeconds: 120,
+  },
+  {
+    id: 'pi-gemini-4-hydrogen',
+    method: 'pi-agent',
+    model: 'gemini-4-hydrogen',
+    label: 'Pi — Gemini 4 Hydrogen',
+    shortLabel: 'Pi (Gemini 4 Hydrogen)',
+    description: '~3.5 min • 7.9/10 quality, Gemini Pareto',
+    estimatedSeconds: 207,
+  },
+  {
+    id: 'pi-opus-5-5',
+    method: 'pi-agent',
+    model: 'claude-opus-5-5',
+    label: 'Pi — Opus 5.5 ★ (Default)',
+    shortLabel: 'Pi (Opus 5.5)',
+    description: '~4 min • 8.5/10 quality, recommended',
+    estimatedSeconds: 240,
+  },
+  {
+    id: 'pi-fable-5-1',
+    method: 'pi-agent',
+    model: 'claude-fable-5-1',
+    label: 'Pi Max — Fable 5.1',
+    shortLabel: 'Pi Max (Fable 5.1)',
+    description: '~6.5 min • 8.6/10 quality, deepest coaching',
+    estimatedSeconds: 395,
+  },
 ]
 
 const TOOL_PHASE_LABELS: ReadonlyArray<[readonly string[], string]> = [
@@ -238,7 +276,8 @@ function MainContent() {
   const [file, setFile] = useState<File | null>(null)
   const [interviewType, setInterviewType] = useState<string>('')
   const [interviewTypes, setInterviewTypes] = useState<InterviewTypeRecord[]>([])
-  const [analysisMethod, setAnalysisMethod] = useState<AnalysisMethod>('direct-api')
+  const [selectedPresetId, setSelectedPresetId] = useState<string>('pi-opus-5-5')
+  const selectedPreset = ANALYSIS_PRESETS.find((p) => p.id === selectedPresetId) ?? ANALYSIS_PRESETS[0]
   const [analyzing, setAnalyzing] = useState(false)
   const [analysis, setAnalysis] = useState('')
   const [error, setError] = useState('')
@@ -463,7 +502,8 @@ function MainContent() {
     const formData = new FormData()
     formData.append('transcript', file)
     formData.append('interviewType', interviewType)
-    formData.append('method', analysisMethod)
+    formData.append('method', selectedPreset.method)
+    formData.append('model', selectedPreset.model)
     if (cachedCriteria) {
       formData.append('cachedCriteria', cachedCriteria)
     }
@@ -615,18 +655,18 @@ function MainContent() {
                   disabled={analyzing}
                   className="method-trigger"
                 >
-                  {ANALYSIS_METHODS.find((m) => m.value === analysisMethod)?.label ?? 'Fast'}
+                  {selectedPreset.shortLabel}
                   <span className="dropdown-arrow">▾</span>
                 </button>
                 {showMethodDropdown && (
                   <div className="method-options">
-                    {ANALYSIS_METHODS.map((option) => (
+                    {ANALYSIS_PRESETS.map((option) => (
                       <button
-                        key={option.value}
+                        key={option.id}
                         type="button"
-                        className={`method-option ${analysisMethod === option.value ? 'selected' : ''}`}
+                        className={`method-option ${selectedPreset.id === option.id ? 'selected' : ''}`}
                         onClick={() => {
-                          setAnalysisMethod(option.value)
+                          setSelectedPresetId(option.id)
                           setShowMethodDropdown(false)
                         }}
                       >
@@ -667,7 +707,7 @@ function MainContent() {
                   Get thoughtful, constructive feedback on your interview practice.
                 </p>
                 <p className="welcome-subtitle">
-                  Upload your transcript above. Analysis takes about 1 to 2 minutes.
+                  Default Pi analysis takes about 3 to 4 minutes (or ~2 minutes in Pi Fast mode).
                 </p>
               </div>
             </div>
@@ -688,7 +728,7 @@ function MainContent() {
               <h2 className="brewing-title">Brewing Your Analysis...</h2>
               <div className="time-estimate">
                 {(() => {
-                  const estimatedTotal = ANALYSIS_METHODS.find((m) => m.value === analysisMethod)?.estimatedSeconds ?? 120
+                  const estimatedTotal = selectedPreset.estimatedSeconds
                   const minutes = Math.floor(elapsedSeconds / 60)
                   const seconds = elapsedSeconds % 60
                   const remaining = Math.max(0, estimatedTotal - elapsedSeconds)

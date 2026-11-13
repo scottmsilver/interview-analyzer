@@ -75,7 +75,7 @@ describe('analyzer credentials and client setup', () => {
     assert.equal(hasLlmCredentials('direct-api'), false);
 
     process.env.PI_LLM_API = 'openai-completions';
-    assert.equal(hasLlmCredentials(), false);
+    assert.equal(hasLlmCredentials(), true);
     assert.equal(hasLlmCredentials('direct-api'), false);
     assert.equal(hasLlmCredentials('agent-sdk'), false);
     assert.equal(hasLlmCredentials('pi-agent'), true);
@@ -251,7 +251,7 @@ describe('Manifest error detection and thinking fallback', () => {
       })()) as any;
 
     await assert.rejects(
-      () => analyzeInterviewSync('Transcript', { interviewType: 'generic' }, fakeQuery),
+      () => analyzeInterviewSync('Transcript', { interviewType: 'generic', method: 'agent-sdk' }, fakeQuery),
       /Manifest router error:/
     );
 

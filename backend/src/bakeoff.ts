@@ -75,6 +75,13 @@ export const DEFAULT_ARMS: BakeoffArm[] = [
     apiMode: 'openai-responses',
   },
   {
+    id: 'pi-agent-gemini-4-hydrogen',
+    label: 'pi-agent (gemini-4-hydrogen, google)',
+    method: 'pi-agent',
+    model: 'gemini-4-hydrogen',
+    apiMode: 'openai-completions',
+  },
+  {
     id: 'pi-agent-gemini-4-carbon',
     label: 'pi-agent (gemini-4-carbon, google)',
     method: 'pi-agent',

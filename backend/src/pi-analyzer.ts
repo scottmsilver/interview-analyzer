@@ -182,6 +182,7 @@ export const ALLOWED_PI_MODELS: ReadonlySet<string> = new Set([
   'gpt-5.6-terra',
   'gpt-5.6-luna',
   // Google
+  'gemini-4-hydrogen',
   'gemini-4-carbon',
   'gemini-4-argon',
   'gemini-3.8-flash',

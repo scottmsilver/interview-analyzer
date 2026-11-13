@@ -7,6 +7,7 @@ import { AssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-s
 import { collectAnalysisSync, DEFAULT_ANTHROPIC_MODEL, hasLlmCredentials } from './analyzer.js';
 import { DEFAULT_ARMS, parseCliArgs, validateBakeoffEnvironment } from './bakeoff.js';
 import {
+  ALLOWED_PI_MODELS,
   analyzeInterviewPi,
   buildPiSystemPrompt,
   type PiRunTelemetry,
@@ -1010,7 +1011,14 @@ describe('bakeoff CLI guards', () => {
     delete process.env.ANTHROPIC_MODEL;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
 
-    for (const model of ['gpt-6.1-sol', 'gpt-6-astra', 'gemini-4-carbon', 'gemini-3.8-flash']) {
+    assert.equal(ALLOWED_PI_MODELS.has('gemini-4-hydrogen'), true);
+    for (const model of [
+      'gpt-6.1-sol',
+      'gpt-6-astra',
+      'gemini-4-hydrogen',
+      'gemini-4-carbon',
+      'gemini-3.8-flash',
+    ]) {
       assert.equal(resolvePiModelId({ interviewType: 'generic', model }), model);
     }
 
@@ -1047,11 +1055,12 @@ describe('bakeoff CLI guards', () => {
     assert.equal(hasLlmCredentials('direct-api', 'gpt-6.1-sol'), false);
   });
 
-  it('includes 8 DEFAULT_ARMS covering Claude, Codex, and Google models', () => {
-    assert.equal(DEFAULT_ARMS.length, 8);
+  it('includes 9 DEFAULT_ARMS covering Claude, Codex, and Google models', () => {
+    assert.equal(DEFAULT_ARMS.length, 9);
     const ids = new Set(DEFAULT_ARMS.map((a) => a.id));
     assert.ok(ids.has('pi-agent-codex-gpt-6-1-sol'));
     assert.ok(ids.has('pi-agent-codex-gpt-6-astra'));
+    assert.ok(ids.has('pi-agent-gemini-4-hydrogen'));
     assert.ok(ids.has('pi-agent-gemini-4-carbon'));
     assert.ok(ids.has('pi-agent-gemini-3-8-flash'));
   });

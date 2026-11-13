@@ -22,7 +22,10 @@ const OPEN_AI_OR_GOOGLE_MODEL_RE = /^(?:gpt-|o1(?:$|[-_.])|o3(?:$|[-_.])|o4(?:$|
 /**
  * Check whether any supported LLM credential is configured for the given analysis method.
  */
-export function hasLlmCredentials(method?: AnalysisMethod, requestedModel?: string): boolean {
+export function hasLlmCredentials(
+  method: AnalysisMethod = DEFAULT_ANALYSIS_METHOD,
+  requestedModel?: string
+): boolean {
   if (process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY) {
     return true;
   }
@@ -76,6 +79,8 @@ export const VALID_ANALYSIS_METHODS: ReadonlySet<AnalysisMethod> = new Set([
   'direct-api',
   'pi-agent',
 ]);
+
+export const DEFAULT_ANALYSIS_METHOD: AnalysisMethod = 'pi-agent';
 
 export function isValidAnalysisMethod(value: unknown): value is AnalysisMethod {
   return typeof value === 'string' && VALID_ANALYSIS_METHODS.has(value as AnalysisMethod);
@@ -255,7 +260,7 @@ export function getAnthropicModel(override?: string): string {
 export interface AnalysisOptions {
   interviewType: string;  // Can be built-in types or custom admin-defined types
   cachedCriteria?: string;  // Pre-fetched interview criteria (from admin or web search)
-  method?: AnalysisMethod;  // Which analysis method to use (default: agent-sdk)
+  method?: AnalysisMethod;  // Which analysis method to use (default: pi-agent)
   model?: string;          // Optional model override (default: ANTHROPIC_MODEL env or claude-opus-5-5)
 }
 
@@ -927,10 +932,11 @@ export async function analyzeInterviewSync(
   options: AnalysisOptions = { interviewType: 'generic' },
   queryFn: typeof query = query
 ): Promise<string> {
+  const method: AnalysisMethod = options.method ?? DEFAULT_ANALYSIS_METHOD;
   const generator =
-    options.method === 'pi-agent'
+    method === 'pi-agent'
       ? await (await import('./pi-analyzer.js')).analyzeInterviewPi(transcript, options)
-      : options.method === 'direct-api'
+      : method === 'direct-api'
         ? await analyzeInterviewDirectAPI(transcript, options)
         : await analyzeInterview(transcript, options, queryFn);
   return collectAnalysisSync(generator);

@@ -252,6 +252,13 @@ describe('analyze input validation', () => {
       const rPiStream = await fetch(`${baseUrl}/api/analyze/stream`, { method: 'POST', body: piStreamForm });
       assert.equal(rPiStream.status, 400);
 
+      // Omitting method defaults to pi-agent and reaches file validation (400), not 500
+      const rDefaultAnalyze = await fetch(`${baseUrl}/api/analyze`, { method: 'POST', body: new FormData() });
+      assert.equal(rDefaultAnalyze.status, 400);
+
+      const rDefaultStream = await fetch(`${baseUrl}/api/analyze/stream`, { method: 'POST', body: new FormData() });
+      assert.equal(rDefaultStream.status, 400);
+
       // Per-request model alone (without PI_LLM_API or ANTHROPIC_MODEL) suffices for pi-agent
       delete process.env.PI_LLM_API;
       const piModelForm = new FormData();
