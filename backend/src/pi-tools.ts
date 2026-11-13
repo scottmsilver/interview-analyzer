@@ -400,16 +400,6 @@ export function parseTranscript(transcript: string): ParsedTranscript {
       }
     }
 
-    if (
-      turns.length === 0 &&
-      !currentTurn &&
-      !activeSectionTimestamp &&
-      !pendingVttTimestamp &&
-      isTopHeaderNoise(line, findNextNonEmptyLine())
-    ) {
-      continue;
-    }
-
     let matchedTimestamped = false;
     for (const pat of timestampedPatterns) {
       if ((m = line.match(pat.re))) {
@@ -486,6 +476,16 @@ export function parseTranscript(transcript: string): ParsedTranscript {
         activeSectionTimestamp = null;
         continue;
       }
+    }
+
+    if (
+      turns.length === 0 &&
+      !currentTurn &&
+      !activeSectionTimestamp &&
+      !pendingVttTimestamp &&
+      isTopHeaderNoise(line, findNextNonEmptyLine())
+    ) {
+      continue;
     }
 
     const { normalized: normLine, hadEmphasis } = normalizeSpeakerPrefixLine(line);
@@ -579,23 +579,55 @@ export function parseTranscript(transcript: string): ParsedTranscript {
     substantiveSpeakers.length < 2 && allNamedSpeakers.length === 2
       ? allNamedSpeakers
       : substantiveSpeakers;
-  const realSpeakerSet = new Set(realSpeakers.map((s) => s.speaker));
 
   const hasExplicitInterviewer = turns.some((t) => t.role === 'interviewer');
   const hasExplicitCandidate = turns.some((t) => t.role === 'candidate');
 
+  const speakerInterviewerScore = (s: { words: number; turns: number; questionTurns: number }) =>
+    (s.questionTurns / Math.max(1, s.turns)) * 2 - s.words / Math.max(1, s.turns) / 120;
+
   if (hasExplicitInterviewer !== hasExplicitCandidate) {
     const otherRealSpeakers = realSpeakers.filter((s) => s.role === 'other');
     const allOtherNamedSpeakers = allNamedSpeakers.filter((s) => s.role === 'other');
-    if (
-      otherRealSpeakers.length >= 1 &&
-      otherRealSpeakers.length <= 2 &&
-      allOtherNamedSpeakers.length <= 3
-    ) {
-      const inferredRole: SpeakerRole = hasExplicitInterviewer ? 'candidate' : 'interviewer';
+    if (allOtherNamedSpeakers.length <= 3) {
+      const inferredBySpeaker = new Map<string, SpeakerRole>();
+      if (otherRealSpeakers.length === 1) {
+        inferredBySpeaker.set(
+          otherRealSpeakers[0].speaker,
+          hasExplicitInterviewer ? 'candidate' : 'interviewer',
+        );
+      } else if (otherRealSpeakers.length === 2) {
+        const [a, b] = otherRealSpeakers;
+        const scoreA = speakerInterviewerScore(a);
+        const scoreB = speakerInterviewerScore(b);
+        if (hasExplicitInterviewer) {
+          // Disambiguate e.g. Interviewer + named interviewer Alice + candidate Bob
+          if (Math.abs(scoreA - scoreB) > 0.15) {
+            if (scoreA > scoreB) {
+              inferredBySpeaker.set(a.speaker, 'interviewer');
+              inferredBySpeaker.set(b.speaker, 'candidate');
+            } else {
+              inferredBySpeaker.set(b.speaker, 'interviewer');
+              inferredBySpeaker.set(a.speaker, 'candidate');
+            }
+          }
+        } else {
+          // Explicit candidate + 2 remaining speakers (e.g. 2 panelists, or 1 panelist + 1 non-question shadow)
+          if (a.questionTurns > 0 && b.questionTurns > 0) {
+            inferredBySpeaker.set(a.speaker, 'interviewer');
+            inferredBySpeaker.set(b.speaker, 'interviewer');
+          } else if (Math.abs(scoreA - scoreB) > 0.15) {
+            inferredBySpeaker.set(scoreA > scoreB ? a.speaker : b.speaker, 'interviewer');
+          } else {
+            inferredBySpeaker.set(a.speaker, 'interviewer');
+            inferredBySpeaker.set(b.speaker, 'interviewer');
+          }
+        }
+      }
       for (const turn of turns) {
-        if (turn.role === 'other' && realSpeakerSet.has(turn.speaker)) {
-          turn.role = inferredRole;
+        const inferred = inferredBySpeaker.get(turn.speaker);
+        if (turn.role === 'other' && inferred) {
+          turn.role = inferred;
         }
       }
     }
@@ -603,10 +635,8 @@ export function parseTranscript(transcript: string): ParsedTranscript {
     const inferredBySpeaker = new Map<string, SpeakerRole>();
     if (realSpeakers.length === 2) {
       const [a, b] = realSpeakers;
-      const avgA = a.words / Math.max(1, a.turns);
-      const avgB = b.words / Math.max(1, b.turns);
-      const scoreA = (a.questionTurns / Math.max(1, a.turns)) * 2 - avgA / 120;
-      const scoreB = (b.questionTurns / Math.max(1, b.turns)) * 2 - avgB / 120;
+      const scoreA = speakerInterviewerScore(a);
+      const scoreB = speakerInterviewerScore(b);
       if (Math.abs(scoreA - scoreB) > 0.15) {
         if (scoreA > scoreB) {
           inferredBySpeaker.set(a.speaker, 'interviewer');

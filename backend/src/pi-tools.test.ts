@@ -557,6 +557,28 @@ Verdict: Borderline
     assert.equal(proseClockRes.summary.hasTimestamps, false);
     assert.equal(proseClockRes.passed, false);
     assert.deepEqual(proseClockRes.summary.hallucinatedTimestamps, ['09:00', '17:00']);
+
+    // 6. [P2] Timestamped opening dialogue mentioning time-of-day is NOT dropped
+    const tsTimeDialogue = parseTranscript(
+      '[00:00] Interviewer: We have until 10:30 AM.\n[00:15] Candidate: Sounds good, let us begin.',
+    );
+    assert.equal(tsTimeDialogue.turns.length, 2);
+    assert.equal(tsTimeDialogue.turns[0].speaker, 'Interviewer');
+    assert.equal(tsTimeDialogue.turns[0].timestampFormatted, '00:00:00');
+    assert.match(tsTimeDialogue.turns[0].text, /10:30 AM/);
+
+    // 7. [P2] Partially labeled panel (Interviewer + named interviewer Alice + candidate Bob) disambiguates Alice vs Bob
+    const partialPanel = [
+      'Interviewer: Welcome! How would you improve commuter trip alerts?',
+      'Alice: What specific user segments would you prioritize first?',
+      'Bob: I would prioritize daily rail commuters transferring between lines because missed transfers cause high frustration and repeat churn across peak morning commutes.',
+      'Alice: How would you measure alert accuracy and false-positive fatigue?',
+      'Bob: Our North Star would be timely transfer completion rate per active commute, guarded by alert mute rate and opt-out rate across the first thirty days after enabling alerts.',
+    ].join('\n');
+    const partialParsed = parseTranscript(partialPanel);
+    assert.equal(partialParsed.turns.filter((t) => t.speaker === 'Interviewer').every((t) => t.role === 'interviewer'), true);
+    assert.equal(partialParsed.turns.filter((t) => t.speaker === 'Alice').every((t) => t.role === 'interviewer'), true);
+    assert.equal(partialParsed.turns.filter((t) => t.speaker === 'Bob').every((t) => t.role === 'candidate'), true);
   });
 });
 
