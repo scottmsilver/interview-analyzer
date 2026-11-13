@@ -11,6 +11,7 @@ export type TimestampFormat =
   | 'vtt'
   | 'otter'
   | 'plain'
+  | 'inline'
   | 'none';
 
 export type SpeakerRole = 'interviewer' | 'candidate' | 'other';
@@ -57,6 +58,10 @@ export interface TranscriptMetrics {
   hasTimestamps: boolean;
   timestampFormat: TimestampFormat;
   validTimestamps: string[];
+  sourceDocumentType: 'verbatim_transcript' | 'secondary_evaluation_or_notes';
+  coachedSessionDetected: boolean;
+  interviewerCoachingBlocks: MonologueInfo[];
+  qaOnlyCandidateTalkRatioPct?: number;
   totalWords: number;
   totalTurns: number;
   candidateWords: number;
@@ -132,6 +137,10 @@ export interface QuestionQualityAudit {
   };
 }
 
+export interface VerifyEvaluationOptions {
+  cachedCriteria?: string;
+}
+
 export interface VerificationResult {
   passed: boolean;
   issues: string[];
@@ -193,7 +202,7 @@ export function classifySpeakerRole(speaker: string): SpeakerRole {
 }
 
 const METADATA_HEADER_KEY_RE =
-  /^(?:(?:program|date|interview\s+date|interviewers|duration|location|role|position|overall\s+score|title|summary|scorecard|topic|subject|attendees?|participants?|meeting|session|company|recording|transcript)\b|interviewer\(s\))/i;
+  /^(?:(?:program|date|interview\s+date|interview\s+type|interviewers|duration|location|role|position|overall\s+score|title|summary|scorecard|topic|subject|attendees?|participants?|meeting|session|company|recording|transcript)\b|interviewer\(s\))/i;
 
 const PROSE_COLON_PREFIX_RE =
   /^(?:note|notes|first|second|third|example|e\.?g|step|steps|option|options|metric|metrics|question|questions|answer|answers|strength|strengths|weakness|weaknesses|verdict|before|after|instead\s+of|takeaway|takeaways|key\s+takeaways?|overview|background|context|problem|goal|goals|recommendation|recommendations|feedback|pros|cons|risk|risks|timeline|next\s+steps?|action\s+items?|follow[- ]?ups?|rubric|scores?|rating|evaluation|calibration|observations?|highlights?|concerns?|conclusion)\b/i;
@@ -736,9 +745,90 @@ const SIGNPOST_PHRASES = [
   'let me pause',
 ];
 
+const SECONDARY_NOTES_MARKER_PATTERNS: ReadonlyArray<RegExp> = [
+  /\bquestion-by-question\b/i,
+  /\boverall\s+(?:interview\s+)?score\s*:\s*\d+(?:\.\d+)?\s*\/\s*(?:10|5)\b/i,
+  /^\s*(?:\*\*)?score(?:\*\*)?\s*:\s*\d+(?:\.\d+)?\s*\/\s*(?:10|5)\s*$/im,
+  /\b(?:comprehensive evaluation|analyze this interview transcript in detail|practice session with coaching)\b/i,
+  /^[✅❌]\s+/m,
+  /\bpass the\b[^\n]{0,40}\bbar\?/i,
+];
+
+const INTERVIEWER_COACHING_CUE_RE =
+  /\b(?:let's try that again|try answering again|try that again|if i were answering|let me pause|in a real interview|don't ever do that|good retry|practice session|let me coach|re-?answer)\b/i;
+
+function isTalkRatioPair(raw: string, fullLine: string): boolean {
+  const parts = raw.split(':').map((p) => Number.parseInt(p, 10));
+  if (parts.length === 2 && parts[0] + parts[1] === 100) {
+    return true;
+  }
+  if (parts.length === 2 && /ratio|talk[- ]to[- ]listen|candidate[- ]to[- ]interviewer|split/i.test(fullLine)) {
+    return true;
+  }
+  return false;
+}
+
+function extractInlineTranscriptTimestampSecs(transcript: string): number[] {
+  const secs: number[] = [];
+  const lines = (transcript || '').replace(/\r\n/g, '\n').split('\n');
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (/^Transcription ended after\s+\d{1,2}:\d{2}(?::\d{2})?\b/i.test(line)) {
+      continue;
+    }
+    const matches = line.matchAll(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g);
+    for (const match of matches) {
+      const rawTs = match[0];
+      if (isTalkRatioPair(rawTs, line)) continue;
+      const idx = match.index ?? 0;
+      const before = line.slice(0, idx);
+      const after = line.slice(idx + rawTs.length);
+      if (/^\s*(?:am|pm|a\.m\.|p\.m\.|pst|pdt|est|edt|cst|cdt|mst|mdt|utc|gmt)\b/i.test(after)) {
+        continue;
+      }
+      if (
+        /\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\s*$/.test(before) ||
+        /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{2,4}\s*(?:at\s+)?$/i.test(
+          before,
+        )
+      ) {
+        continue;
+      }
+      // Require transcript-offset context so ordinary 2-part clock times in prose ("from 09:00 to 17:00") are ignored
+      const isThreePartHms = rawTs.split(':').length === 3;
+      const isWrapped =
+        (/\($/.test(before) && /^\)/.test(after)) || (/\[$/.test(before) && /^\]/.test(after));
+      const isLineStartOffset =
+        /^(?:[-*•]\s*)?$/.test(before) && !/^\s*(?:to|-|–)\s*\d{1,2}:\d{2}\b/i.test(after);
+      if (!isThreePartHms && !isWrapped && !isLineStartOffset) {
+        continue;
+      }
+      const sec = parseTimestampToSec(rawTs);
+      if (sec !== null) {
+        secs.push(sec);
+      }
+    }
+  }
+  return secs;
+}
+
 export function computeTranscriptMetrics(transcript: string): TranscriptMetrics {
   const parsed = parseTranscript(transcript);
   const turns = parsed.turns;
+  const inlineSecs = extractInlineTranscriptTimestampSecs(transcript);
+  const distinctInlineSecs = Array.from(new Set(inlineSecs)).sort((a, b) => a - b);
+  const effectiveHasTimestamps = parsed.hasTimestamps || distinctInlineSecs.length >= 2;
+  const effectiveTimestampFormat: TimestampFormat = parsed.hasTimestamps
+    ? parsed.timestampFormat
+    : distinctInlineSecs.length >= 2
+      ? 'inline'
+      : 'none';
+  const effectiveValidTimestamps = parsed.hasTimestamps
+    ? parsed.validTimestamps
+    : distinctInlineSecs.length >= 2
+      ? distinctInlineSecs.map(formatSecAsHms)
+      : [];
 
   const totalWords = turns.reduce((acc, t) => acc + t.wordCount, 0);
   const speakerMap = new Map<
@@ -790,11 +880,63 @@ export function computeTranscriptMetrics(transcript: string): TranscriptMetrics 
     }
   }
 
+  const secondaryMarkerHits = SECONDARY_NOTES_MARKER_PATTERNS.filter((re) => re.test(transcript)).length;
+  const hasExplicitInterviewer = turns.some(
+    (t) => t.role === 'interviewer' && classifySpeakerRole(t.speaker) === 'interviewer',
+  );
+  const isSecondaryNotes =
+    secondaryMarkerHits >= 2 && (!hasExplicitInterviewer || interviewerTurns <= 1);
+  const sourceDocumentType: TranscriptMetrics['sourceDocumentType'] = isSecondaryNotes
+    ? 'secondary_evaluation_or_notes'
+    : 'verbatim_transcript';
+
   const dialogueWords = candidateWords + interviewerWords;
-  const candidateTalkRatioPct =
+  let candidateTalkRatioPct =
     dialogueWords > 0 ? Math.round((candidateWords / dialogueWords) * 1000) / 10 : 0;
-  const interviewerTalkRatioPct =
+  let interviewerTalkRatioPct =
     dialogueWords > 0 ? Math.round((100 - candidateTalkRatioPct) * 10) / 10 : 0;
+  if (isSecondaryNotes && (candidateTurns <= 2 || !hasExplicitInterviewer)) {
+    candidateTalkRatioPct = 0;
+    interviewerTalkRatioPct = 0;
+  }
+
+  const coachingTurns = turns
+    .map((t, idx) => ({ t, next: turns[idx + 1] }))
+    .filter(
+      ({ t }) =>
+        t.role === 'interviewer' &&
+        t.wordCount >= 180 &&
+        INTERVIEWER_COACHING_CUE_RE.test(t.text),
+    );
+  const interviewerCoachingBlocks: MonologueInfo[] = [...coachingTurns]
+    .sort((a, b) => b.t.wordCount - a.t.wordCount)
+    .slice(0, 5)
+    .map(({ t, next }) => ({
+      turnIndex: t.turnIndex,
+      startTimestamp: t.timestampFormatted ?? `Turn #${t.turnIndex}`,
+      endTimestamp: next?.timestampFormatted ?? `Turn #${t.turnIndex}`,
+      wordCount: t.wordCount,
+      preview: t.text.split(/\s+/).slice(0, 32).join(' ') + (t.wordCount > 32 ? '...' : ''),
+    }));
+
+  const interviewerText = turns
+    .filter((t) => t.role === 'interviewer')
+    .map((t) => t.text)
+    .join(' ');
+  const hasCoachingCue = INTERVIEWER_COACHING_CUE_RE.test(interviewerText);
+  const coachedSessionDetected = !isSecondaryNotes && hasCoachingCue;
+
+  let qaOnlyCandidateTalkRatioPct: number | undefined;
+  if (!isSecondaryNotes && coachingTurns.length > 0 && candidateWords > 0) {
+    const coachingTurnIndices = new Set(coachingTurns.map(({ t }) => t.turnIndex));
+    const nonLectureInterviewerWords = turns
+      .filter((t) => t.role === 'interviewer' && !coachingTurnIndices.has(t.turnIndex))
+      .reduce((sum, t) => sum + t.wordCount, 0);
+    const qaDenom = candidateWords + nonLectureInterviewerWords;
+    if (qaDenom > 0) {
+      qaOnlyCandidateTalkRatioPct = Math.round((candidateWords / qaDenom) * 1000) / 10;
+    }
+  }
 
   const totalMeasuredDur = candidateDurationSec + interviewerDurationSec;
   const durationWeightedCandidateRatioPct =
@@ -878,9 +1020,13 @@ export function computeTranscriptMetrics(transcript: string): TranscriptMetrics 
   }
 
   return {
-    hasTimestamps: parsed.hasTimestamps,
-    timestampFormat: parsed.timestampFormat,
-    validTimestamps: parsed.validTimestamps,
+    hasTimestamps: effectiveHasTimestamps,
+    timestampFormat: effectiveTimestampFormat,
+    validTimestamps: effectiveValidTimestamps,
+    sourceDocumentType,
+    coachedSessionDetected,
+    interviewerCoachingBlocks,
+    ...(qaOnlyCandidateTalkRatioPct !== undefined ? { qaOnlyCandidateTalkRatioPct } : {}),
     totalWords,
     totalTurns: turns.length,
     candidateWords,
@@ -1227,65 +1373,53 @@ function normalizeForQuoteMatch(text: string): string {
     .trim();
 }
 
-function isTalkRatioPair(raw: string, fullLine: string): boolean {
-  const parts = raw.split(':').map((p) => Number.parseInt(p, 10));
-  if (parts.length === 2 && parts[0] + parts[1] === 100) {
-    return true;
+/** Detects an explicit numeric scoring ceiling (e.g. 4, 5, 7, 10, 100) from cachedCriteria, or null if unspecified. */
+export function detectCriteriaScoreMax(criteria = ''): number | null {
+  if (!criteria) return null;
+  const cleaned = criteria
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\b\d{1,4}\/\d{1,2}\/\d{1,4}\b/g, '')
+    .replace(/\btotal\b[^\n]*\/\s*\d+\b/gi, '');
+  const slashMatch = cleaned.match(
+    /(?:^|[\s(|:xX]|\b\d+(?:\.\d+)?)\/\s*(100|20|10|7|6|5|4|3)\b(?!\s*\/\s*\d)/m,
+  );
+  if (slashMatch) return Number.parseInt(slashMatch[1], 10);
+  const pointScaleMatch = cleaned.match(
+    /\b(100|20|10|7|6|5|4|3)[- ]point\s+(?:scale|rubric)\b|\bout\s+of\s+(100|20|10|7|6|5|4|3)\b/i,
+  );
+  if (pointScaleMatch) {
+    return Number.parseInt(pointScaleMatch[1] ?? pointScaleMatch[2], 10);
   }
-  if (parts.length === 2 && /ratio|talk[- ]to[- ]listen|candidate[- ]to[- ]interviewer|split/i.test(fullLine)) {
-    return true;
+  const unitAfterRe =
+    /^\s*(?:min(?:ute)?s?|sec(?:ond)?s?|hours?|hrs?|days?|weeks?|months?|years?|bullets?|sentences?|examples?|sample\s+reframes?|reframes?|questions?|items?|words?|stor(?:y|ies)|people|persons?|%)/i;
+  for (const m of cleaned.matchAll(/\b(?:0|1)\s*(?:[–-]|to)\s*(100|20|10|7|6|5|4|3)\b/gi)) {
+    const startIdx = m.index ?? 0;
+    const endIdx = startIdx + m[0].length;
+    if (unitAfterRe.test(cleaned.slice(endIdx))) continue;
+    const clauseBefore = (cleaned.slice(Math.max(0, startIdx - 35), startIdx).split(/[.\n]/).pop() ?? '');
+    const clauseAfter = (cleaned.slice(endIdx, Math.min(cleaned.length, endIdx + 35)).split(/[.\n]/)[0] ?? '');
+    if (
+      /(?:score|scoring|scale|rubric|rating|dimension|criterion|criteria|grade|grading|evaluation)/i.test(
+        `${clauseBefore} ${clauseAfter}`,
+      ) ||
+      cleaned[startIdx - 1] === '('
+    ) {
+      return Number.parseInt(m[1], 10);
+    }
   }
-  return false;
+  if (/\btotal\b[^\n]*\/\s*50\b/i.test(criteria)) return 5;
+  return null;
 }
 
-function extractInlineTranscriptTimestampSecs(transcript: string): number[] {
-  const secs: number[] = [];
-  const lines = (transcript || '').replace(/\r\n/g, '\n').split('\n');
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    if (/^Transcription ended after\s+\d{1,2}:\d{2}(?::\d{2})?\b/i.test(line)) {
-      continue;
-    }
-    const matches = line.matchAll(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g);
-    for (const match of matches) {
-      const rawTs = match[0];
-      if (isTalkRatioPair(rawTs, line)) continue;
-      const idx = match.index ?? 0;
-      const before = line.slice(0, idx);
-      const after = line.slice(idx + rawTs.length);
-      if (/^\s*(?:am|pm|a\.m\.|p\.m\.|pst|pdt|est|edt|cst|cdt|mst|mdt|utc|gmt)\b/i.test(after)) {
-        continue;
-      }
-      if (
-        /\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\s*$/.test(before) ||
-        /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{2,4}\s*(?:at\s+)?$/i.test(
-          before,
-        )
-      ) {
-        continue;
-      }
-      // Require transcript-offset context so ordinary 2-part clock times in prose ("from 09:00 to 17:00") are ignored
-      const isThreePartHms = rawTs.split(':').length === 3;
-      const isWrapped =
-        (/\($/.test(before) && /^\)/.test(after)) || (/\[$/.test(before) && /^\]/.test(after));
-      const isLineStartOffset =
-        /^(?:[-*•]\s*)?$/.test(before) && !/^\s*(?:to|-|–)\s*\d{1,2}:\d{2}\b/i.test(after);
-      if (!isThreePartHms && !isWrapped && !isLineStartOffset) {
-        continue;
-      }
-      const sec = parseTimestampToSec(rawTs);
-      if (sec !== null) {
-        secs.push(sec);
-      }
-    }
-  }
-  return secs;
+/** Returns true when cachedCriteria specifies a 1–5 scoring scale rather than 1–10. */
+export function isFivePointCriteria(criteria = ''): boolean {
+  return detectCriteriaScoreMax(criteria) === 5;
 }
 
 export function verifyEvaluationDraft(
   transcript: string,
   draftMarkdown: string,
+  options: VerifyEvaluationOptions = {},
 ): VerificationResult {
   const parsed = parseTranscript(transcript);
   const metrics = computeTranscriptMetrics(transcript);
@@ -1365,23 +1499,64 @@ export function verifyEvaluationDraft(
     );
   }
 
-  // 2. Verify quoted snippets (>= 20 chars) excluding prescribed "After" rewrites
+  // Locate Sample Reframes section respecting heading hierarchy (exits on any equal-or-higher heading)
+  const sampleReframesBodyLines: string[] = [];
+  const inSampleReframesLine = new Set<number>();
+  let reframeHeadingLevel: number | null = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    const headingMatch = lines[i].match(/^\s*(#{1,6})\s+(.+)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      if (/^sample\s+reframes\b/i.test(headingMatch[2].trim())) {
+        reframeHeadingLevel = level;
+        continue;
+      }
+      if (reframeHeadingLevel !== null && level <= reframeHeadingLevel) {
+        reframeHeadingLevel = null;
+      }
+    }
+    if (reframeHeadingLevel !== null) {
+      inSampleReframesLine.add(i);
+      sampleReframesBodyLines.push(lines[i]);
+    }
+  }
+
+  // 2. Verify quoted snippets (>= 20 chars) excluding prescribed "After" / suggested rewrites
   const normalizedTranscript = normalizeForQuoteMatch(transcript);
   let verifiedQuoteCount = 0;
   const unverifiedQuotes: string[] = [];
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+
     const isPrescribedRewriteLine =
-      /^\s*(?:[-*]|\d+\.)?\s*(?:\*\*)?(?:after|suggested|say instead|stronger alternative|rewrite)\b/i.test(
+      /^\s*(?:[-*]|\d+\.)?\s*(?:\*\*)?(?:after|suggested(?:\s+(?:answer|reframe|version|phrasing|response))?|say\s+instead|stronger\s+(?:alternative|version|phrasing|response)|rewrite|model\s+(?:answer|response)|what\s+a\s+strong|what\s+a\s+bar-raiser)\b/i.test(
         line,
       );
     const quoteMatches = line.matchAll(/["“]([^"”\n]{20,300})["”]/g);
     for (const qm of quoteMatches) {
       const rawQuote = qm[1].trim();
-      // If a single line has both "Instead of/Before: "..."" -> "After: "..."" skip only the part after "After:"
+      // If a single line has both "Instead of/Before: "..."" -> "After: "..."" skip only the prescribed rewrite part
       const idx = qm.index ?? 0;
-      const prefixBeforeQuote = line.slice(0, idx).toLowerCase();
-      if (isPrescribedRewriteLine || /(?:->|→|\bafter\b|\bsay\b|\btry\b)\s*:?\s*$/i.test(prefixBeforeQuote)) {
+      const prefixBeforeQuote = line.slice(0, idx).toLowerCase().replace(/[*_`]/g, '');
+      const clauseBeforeQuote = prefixBeforeQuote.split(/(?:->|→|["“”])/).pop() ?? prefixBeforeQuote;
+      const hasSourceQuotePrefix =
+        /\bcandidate\b\s*:|\b(?:instead\s+of|before|original|current|actual|weak(?:er|est)?|initial|first[- ]pass|transcript|verbatim|the\s+candidate|interviewer|said|asked|stated|claimed|mentioned|wrote|quoted|their\s+(?:answer|response|words)|what\s+(?:they|you))\b/i.test(
+          clauseBeforeQuote,
+        );
+      const hasPrescribedPrefix =
+        /(?:->|→)\s*$/.test(prefixBeforeQuote) ||
+        /(?:\bafter\b|\bsays?\s+instead\b|\btry(?:\s+saying)?\b|reframe\b|rephrase\b|could\s+(?:say|answer|open\s+with)|might\s+(?:say|answer)|would\s+say|suggested(?:\s+(?:answer|reframe|version|phrasing|response))?(?:\s+to\s+(?:the\s+)?(?:interviewer|this|that|question(?:\s+\d+)?))?|stronger\s+(?:alternative|version|phrasing|response)|model\s+(?:answer|response)|revised(?:\s+(?:answer|version))?|(?:what\s+a\s+)?bar[- ]raiser(?:\s+(?:candidate(?:\s+would\s+say|\s+says(?:\s+instead)?)?|answer|response|comparison))?)\s*:?\s*$/i.test(
+          clauseBeforeQuote,
+        );
+      const isStandaloneOrLabeledReframeInSection =
+        inSampleReframesLine.has(i) &&
+        !hasSourceQuotePrefix &&
+        !/\b(?:question|prompt)\s*:?\s*$/i.test(clauseBeforeQuote);
+      if (
+        hasPrescribedPrefix ||
+        (!hasSourceQuotePrefix && (isPrescribedRewriteLine || isStandaloneOrLabeledReframeInSection))
+      ) {
         continue;
       }
 
@@ -1412,6 +1587,14 @@ export function verifyEvaluationDraft(
     );
   }
 
+  const criteria = options.cachedCriteria ?? '';
+  const detectedScaleMax = detectCriteriaScoreMax(criteria);
+  const isCustomNonTenScale = detectedScaleMax !== null && detectedScaleMax !== 10;
+  const hasCustomOutputFormat = /^(?:#{1,6}\s*|\*{1,2})?output\s+format\b(?:\s*:|\*{1,2})?/im.test(
+    criteria,
+  );
+  const requestsSampleReframes = /\bsample\s+reframes\b/i.test(criteria);
+
   // 3. Compare cited talk-to-listen ratio against actual candidateTalkRatioPct
   let citedTalkRatioPct: number | undefined;
   let talkRatioDriftPp: number | undefined;
@@ -1426,47 +1609,144 @@ export function verifyEvaluationDraft(
     if (!Number.isNaN(val) && val > 0 && val < 100) {
       citedTalkRatioPct = val;
       if (hasMeasuredRatio) {
-        talkRatioDriftPp = Math.round(Math.abs(val - metrics.candidateTalkRatioPct) * 10) / 10;
+        const driftFull = Math.abs(val - metrics.candidateTalkRatioPct);
+        const driftQa =
+          typeof metrics.qaOnlyCandidateTalkRatioPct === 'number'
+            ? Math.abs(val - metrics.qaOnlyCandidateTalkRatioPct)
+            : driftFull;
+        talkRatioDriftPp = Math.round(Math.min(driftFull, driftQa) * 10) / 10;
         if (talkRatioDriftPp > 5) {
+          const qaNote =
+            typeof metrics.qaOnlyCandidateTalkRatioPct === 'number'
+              ? ` (or Q&A-only ${metrics.qaOnlyCandidateTalkRatioPct}%)`
+              : '';
           issues.push(
-            `Talk-to-listen ratio drift of ${talkRatioDriftPp}pp: draft cites ${val}% candidate talk, while measured transcript is ${metrics.candidateTalkRatioPct}:${metrics.interviewerTalkRatioPct}.`,
+            `Talk-to-listen ratio drift of ${talkRatioDriftPp}pp: draft cites ${val}% candidate talk, while measured transcript is ${metrics.candidateTalkRatioPct}:${metrics.interviewerTalkRatioPct}${qaNote}.`,
           );
         }
       }
     }
-  } else {
+  } else if (
+    metrics.sourceDocumentType !== 'secondary_evaluation_or_notes' &&
+    !hasCustomOutputFormat
+  ) {
     warnings.push('No explicit talk-to-listen ratio found in draft.');
   }
 
   // 4. Required sections check
   const missingSections: string[] = [];
   const lowerDraft = draftMarkdown.toLowerCase();
+  const unquotedDraft = draftMarkdown.replace(/["“][^"”\n]{1,300}["”]/g, '""');
 
-  const scoreMatches = draftMarkdown.match(/\b\d+(?:\.\d+)?\s*\/\s*10\b/g) ?? [];
-  if (scoreMatches.length === 0) {
-    missingSections.push('per-question and overall X/10 score');
-  } else if (scoreMatches.length === 1) {
-    missingSections.push('per-question X/10 scores (only 1 score found)');
+  const hasUntestedMarkers = /\b(?:untested|not tested|n\/a|not determinable)\b/i.test(
+    draftMarkdown,
+  );
+
+  if (
+    (isCustomNonTenScale && detectedScaleMax !== null) ||
+    (hasCustomOutputFormat && (detectedScaleMax === 10 || /\bscore\b/i.test(criteria)))
+  ) {
+    const targetMax = detectedScaleMax ?? 10;
+    const plainDraftForScale = draftMarkdown.replace(/[*_`]/g, '');
+    const customScaleRe = new RegExp(
+      `\\b\\d+(?:\\.\\d+)?\\s*\\/\\s*${targetMax}\\b|(?:^|[-*|]\\s*)(?:\\d+\\.\\s+)?score(?:\\s*\\((?:0|1)\\s*[–-]\\s*${targetMax}\\))?\\s*:\\s*\\d+(?:\\.\\d+)?\\b|\\|\\s*\\d+(?:\\.\\d+)?\\s*\\|`,
+      'gim',
+    );
+    const customScaleMatches = plainDraftForScale.match(customScaleRe) ?? [];
+    if (
+      customScaleMatches.length === 0 ||
+      (customScaleMatches.length === 1 && !hasUntestedMarkers)
+    ) {
+      missingSections.push(
+        `dimension X/${targetMax} scores matching the 1-${targetMax} rubric scale`,
+      );
+    }
+    if (isCustomNonTenScale) {
+      const tenScaleLines = unquotedDraft
+        .split('\n')
+        .filter((line) => /\b\d+(?:\.\d+)?\s*\/\s*10\b/.test(line) && !/\btotal\b/i.test(line));
+      if (tenScaleLines.length > 0) {
+        issues.push(
+          `Dual scoring scale detected: cachedCriteria specifies a 1-${targetMax} (/${targetMax}) scale, so remove all X/10 scores and follow only the 1-${targetMax} (/${targetMax}) scale and structure defined in cachedCriteria.`,
+        );
+      }
+    }
+  } else if (!hasCustomOutputFormat) {
+    const scoreMatches = draftMarkdown.match(/\b\d+(?:\.\d+)?\s*\/\s*10\b/g) ?? [];
+    if (scoreMatches.length === 0) {
+      missingSections.push('per-question and overall X/10 score');
+    } else if (scoreMatches.length === 1 && !hasUntestedMarkers) {
+      missingSections.push('per-question X/10 scores (only 1 score found)');
+    }
   }
 
-  if (!/\b(?:yes|no|borderline)\b/i.test(draftMarkdown) || !/(?:verdict|pass|bar)/i.test(lowerDraft)) {
+  if (isCustomNonTenScale || hasCustomOutputFormat) {
+    const expectsConclusion =
+      /\b(?:overall(?:\s+(?:impression|score|assessment))?|total\b|summary\s+scorecard|verdict|pass|champion)\b/i.test(
+        criteria,
+      );
+    const hasCustomConclusion =
+      /\b(?:overall(?:\s+(?:impression|score|assessment))?|total\b[^\n]*(?:\/\s*\d+|\bscore\b)|summary\s+scorecard|champion)\b/i.test(
+        draftMarkdown,
+      ) ||
+      (/\b(?:yes|no|borderline|indeterminate|not determinable)\b/i.test(draftMarkdown) &&
+        /(?:verdict|pass|bar)/i.test(lowerDraft));
+    if (expectsConclusion && !hasCustomConclusion) {
+      missingSections.push('overall impression / total summary matching cachedCriteria');
+    }
+  } else if (
+    !/\b(?:yes|no|borderline|indeterminate|not determinable)\b/i.test(draftMarkdown) ||
+    !/(?:verdict|pass|bar)/i.test(lowerDraft)
+  ) {
     missingSections.push('pass verdict (Yes/No/Borderline)');
   }
-  if (!/strength/i.test(lowerDraft)) {
+
+  const expectsStrengths = !hasCustomOutputFormat || /\bstrength/i.test(criteria);
+  const expectsWeaknesses =
+    !hasCustomOutputFormat ||
+    /weakness|area(?:s)? for improvement|what to improve|gap/i.test(criteria);
+  if (expectsStrengths && !/strength/i.test(lowerDraft)) {
     missingSections.push('top 3 strengths');
   }
-  if (!/weakness|area(?:s)? for improvement|gap/i.test(lowerDraft)) {
+  if (expectsWeaknesses && !/weakness|area(?:s)? for improvement|what to improve|gap/i.test(lowerDraft)) {
     missingSections.push('top 3 weaknesses');
   }
 
-  // Count concrete rewrites ("Instead of" / "Before" -> "After" or numbered actionable recommendations)
-  const rewriteMarkers = draftMarkdown.match(/(?:instead of|before\s*:|->\s*after|→\s*\*\*after|after\s*:)/gi) ?? [];
+  // Count concrete rewrites ("Instead of" / "Before" -> "After" or numbered actionable recommendations / Sample Reframes)
+  const rewriteMarkers =
+    draftMarkdown.match(/(?:instead of|before\s*:|->\s*after|→\s*\*\*after|after\s*:)/gi) ?? [];
   const rewritePairs = Math.floor(rewriteMarkers.length / 2);
   const recMatches =
-    draftMarkdown.match(/^\s*(?:\d+\.|[-*])\s+(?:\*\*)?(?:instead of|before|recommendation)/gim) ?? [];
-  const rewriteCount = Math.max(rewritePairs, recMatches.length);
-  if (rewriteCount < 5) {
-    missingSections.push(`5-7 concrete "Instead of"/"Before" -> "After" rewrites (found ${rewriteCount})`);
+    draftMarkdown.match(/^\s*(?:\d+\.|[-*])\s+(?:\*\*)?(?:instead of|before|recommendation)/gim) ??
+    [];
+  let rewriteCount = Math.max(rewritePairs, recMatches.length);
+
+  if (requestsSampleReframes) {
+    if (sampleReframesBodyLines.length > 0) {
+      const sectionBody = sampleReframesBodyLines.join('\n');
+      const subHeadings = sectionBody.match(/^\s*####+\s+\S/gm)?.length ?? 0;
+      const h3Headings = sectionBody.match(/^\s*###\s+\S/gm)?.length ?? 0;
+      const numberedBlocks = sectionBody.match(/^\s*\d+\.\s+\S/gm)?.length ?? 0;
+      const boldNumberedBlocks = sectionBody.match(/^\s*\*\*\d+\.\s+\S/gm)?.length ?? 0;
+      const plainBullets = sectionBody.match(/^\s*[-*]\s+\S/gm)?.length ?? 0;
+      rewriteCount = Math.max(
+        rewriteCount,
+        h3Headings,
+        subHeadings,
+        numberedBlocks,
+        boldNumberedBlocks,
+        plainBullets,
+      );
+    }
+    if (rewriteCount < 2) {
+      missingSections.push(
+        `2-3 Sample Reframes required by cachedCriteria (found ${rewriteCount})`,
+      );
+    }
+  } else if ((!hasCustomOutputFormat || /\brewrite/i.test(criteria)) && rewriteCount < 5) {
+    missingSections.push(
+      `5-7 concrete "Instead of"/"Before" -> "After" rewrites (found ${rewriteCount})`,
+    );
   }
 
   for (const m of missingSections) {
@@ -1577,6 +1857,7 @@ export function createVerifyEvaluationDraftTool(
   getTranscript: () => string,
   recordToolCall?: (name: string) => void,
   onVerified?: (result: VerificationResult) => void,
+  options: VerifyEvaluationOptions = {},
 ): AgentTool {
   const schema = obj({
     draftMarkdown: str({
@@ -1587,11 +1868,11 @@ export function createVerifyEvaluationDraftTool(
     name: 'verify_evaluation_draft',
     label: 'Verify evaluation draft citations',
     description:
-      'Deterministically verify your draft evaluation against the parsed transcript: flags hallucinated clock timestamps when untimestamped, verifies quoted snippets (>=20 chars), checks talk-to-listen ratio accuracy (<=5pp drift), and checks required sections and 5-7 Before/After rewrites. Always call this before your final response.',
+      'Deterministically verify your draft evaluation against the parsed transcript: flags hallucinated clock timestamps when untimestamped, verifies quoted snippets (>=20 chars), checks talk-to-listen ratio accuracy (<=5pp drift), and checks required sections and rewrites/sample reframes respecting cachedCriteria format. Always call this before your final response.',
     parameters: schema,
     execute: async (_id, params): Promise<AgentToolResult<Record<string, never>>> => {
       const draft = String((params as { draftMarkdown?: unknown })?.draftMarkdown ?? '');
-      const result = verifyEvaluationDraft(getTranscript(), draft);
+      const result = verifyEvaluationDraft(getTranscript(), draft, options);
       recordToolCall?.('verify_evaluation_draft');
       onVerified?.(result);
       return {

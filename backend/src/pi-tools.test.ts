@@ -15,6 +15,7 @@ import {
   auditAnswerQuality,
   classifySpeakerRole,
   computeTranscriptMetrics,
+  detectCriteriaScoreMax,
   extractQaTurns,
   parseTranscript,
   verifyEvaluationDraft,
@@ -579,6 +580,410 @@ Verdict: Borderline
     assert.equal(partialParsed.turns.filter((t) => t.speaker === 'Interviewer').every((t) => t.role === 'interviewer'), true);
     assert.equal(partialParsed.turns.filter((t) => t.speaker === 'Alice').every((t) => t.role === 'interviewer'), true);
     assert.equal(partialParsed.turns.filter((t) => t.speaker === 'Bob').every((t) => t.role === 'candidate'), true);
+  });
+
+  it('detects secondary evaluation notes with inline timestamps and coached mock sessions with Q&A-normalized ratio', () => {
+    // 1. Secondary notes / digest with single Candidate header line & inline timestamps
+    const secondaryNotes = [
+      'Practice Session Evaluation',
+      'Candidate: Alex Rivera',
+      'Duration: 45 minutes',
+      'Interview Type: behavioral (practice session with coaching)',
+      '',
+      'Question-by-Question Analysis',
+      'Overall Score: 6.5/10',
+      'Would they pass the APM bar? Borderline',
+      'Score: 6/10',
+      '✅ Strengths (00:01:45): Grounded the SQL optimization story with clear dataset estimates.',
+      '00:03:15 - Used imprecise terminology during storage vs query execution discussion.',
+    ].join('\n');
+
+    const secondaryMetrics = computeTranscriptMetrics(secondaryNotes);
+    assert.equal(secondaryMetrics.sourceDocumentType, 'secondary_evaluation_or_notes');
+    assert.equal(secondaryMetrics.hasTimestamps, true);
+    assert.equal(secondaryMetrics.timestampFormat, 'inline');
+    assert.deepEqual(secondaryMetrics.validTimestamps, ['00:01:45', '00:03:15']);
+    assert.equal(secondaryMetrics.candidateTalkRatioPct, 0);
+    assert.equal(secondaryMetrics.interviewerTalkRatioPct, 0);
+    assert.equal(secondaryMetrics.coachedSessionDetected, false);
+
+    // 2. Coached mock session with >=180-word teaching lecture block
+    const lectureWords = Array.from({ length: 195 }, (_, i) => `concept${i}`).join(' ');
+    const coachedMock = [
+      '[00:00:10] Interviewer: Walk me through how you would instrument an analytics pipeline.',
+      '[00:01:00] Candidate: First I would clarify latency requirements and segment batch versus streaming consumers before proposing schemas and backfill verification steps.',
+      `[00:02:00] Interviewer: Let me pause and coach you here on how query optimization works: ${lectureWords}. Let's try that again.`,
+      '[00:06:00] Candidate: With partitioning isolated from predicate pushdown, I would measure p95 query latency alongside invalid-row drop rate.',
+    ].join('\n');
+
+    const coachedMetrics = computeTranscriptMetrics(coachedMock);
+    assert.equal(coachedMetrics.sourceDocumentType, 'verbatim_transcript');
+    assert.equal(coachedMetrics.coachedSessionDetected, true);
+    assert.equal(coachedMetrics.interviewerCoachingBlocks.length, 1);
+    assert.ok(typeof coachedMetrics.qaOnlyCandidateTalkRatioPct === 'number');
+    assert.ok(coachedMetrics.qaOnlyCandidateTalkRatioPct > coachedMetrics.candidateTalkRatioPct);
+
+    const qaRatioLabel = `${Math.round(coachedMetrics.qaOnlyCandidateTalkRatioPct!)}:${Math.round(100 - coachedMetrics.qaOnlyCandidateTalkRatioPct!)}`;
+    const coachedDraft = `
+### Question 1
+- **Score**: First pass 4/10 -> Coached retry 7/10
+- At \`00:01:00\`, candidate started with "First I would clarify latency requirements and segment batch versus streaming consumers".
+
+## Overall Assessment
+- **Overall Score**: 6/10
+- **Pass Verdict**: Borderline
+- **Talk-to-Listen Ratio**: ${qaRatioLabel} (Q&A-only; full session ${Math.round(coachedMetrics.candidateTalkRatioPct)}:${Math.round(coachedMetrics.interviewerTalkRatioPct)})
+- **Top 3 Strengths**: Quick uptake on retry, clear segmentation, named p95 latency guardrail.
+- **Top 3 Weaknesses**: Initial confusion on optimization vs partitioning, needed coaching interrupt, brief edge cases.
+
+1. Instead of: "First I would clarify latency requirements and segment batch versus streaming consumers" -> After: "Define consumer SLA tiers upfront."
+2. Before: "segment batch versus streaming consumers before proposing schemas" -> After: "State schema evolution policy."
+3. Before: "With partitioning isolated from predicate pushdown" -> After: "Quantify partition pruning selectivity."
+4. Before: "measure p95 query latency alongside invalid-row drop rate" -> After: "Specify 15-minute freshness SLO."
+5. Before: "backfill verification steps" -> After: "Add deterministic row-checksum diffing."
+`;
+    const coachedVerify = verifyEvaluationDraft(coachedMock, coachedDraft);
+    assert.equal(coachedVerify.passed, true, `Expected pass, got: ${coachedVerify.issues.join('; ')}`);
+    assert.ok((coachedVerify.summary.talkRatioDriftPp ?? 99) <= 1);
+
+    // 3. Long (>=180w) interviewer case prompt WITHOUT coaching cues is NOT misclassified as coaching
+    const longPromptTranscript =
+      'Interviewer: ' +
+      'Here is the business context for your case. '.repeat(24) +
+      '\nCandidate: I would begin by identifying our users and measuring retention.';
+    const longPromptMetrics = computeTranscriptMetrics(longPromptTranscript);
+    assert.equal(longPromptMetrics.coachedSessionDetected, false);
+    assert.equal(longPromptMetrics.interviewerCoachingBlocks.length, 0);
+    assert.equal(longPromptMetrics.qaOnlyCandidateTalkRatioPct, undefined);
+
+    // 4. Same-level heading after `### Sample Reframes` closes the quote exemption,
+    // and bold **Before**: "...", `1. Original answer: "..."`, or `Candidate: "..."` inside Sample Reframes still undergoes verification
+    const escapedSectionVerify = verifyEvaluationDraft(
+      longPromptTranscript,
+      '### Sample Reframes\n1. **Before**: "I secretly invented this bold before quote" -> "Replace with verified or suggested wording."\n2. Original answer: "I secretly invented this original answer quote"\n3. Candidate: "I secretly invented this candidate colon quote"\n### Evidence\nThe candidate said "I secretly invented every metric in this report".',
+    );
+    assert.equal(escapedSectionVerify.passed, false);
+    assert.ok(escapedSectionVerify.summary.unverifiedQuotes.some((q) => /secretly invented every metric/.test(q)));
+    assert.ok(escapedSectionVerify.summary.unverifiedQuotes.some((q) => /bold before quote/.test(q)));
+    assert.ok(escapedSectionVerify.summary.unverifiedQuotes.some((q) => /original answer quote/.test(q)));
+    assert.ok(escapedSectionVerify.summary.unverifiedQuotes.some((q) => /candidate colon quote/.test(q)));
+    assert.equal(
+      escapedSectionVerify.summary.unverifiedQuotes.some((q) => /Replace with verified or suggested/.test(q)),
+      false,
+    );
+  });
+
+  it('enforces custom 1-5 cachedCriteria format without 1-10 leakage and supports Untested (N/A) coverage', () => {
+    const dillerCriteria = `
+## EVALUATION DIMENSIONS
+### 1. Project Clarity & Articulation (1–5)
+### 2. Personal Connection & Authenticity (1–5)
+### 3. Leadership & Agency (1–5)
+---
+OUTPUT FORMAT:
+For each of the dimensions, provide Score (1–5), What worked, What to improve.
+### Summary Scorecard
+| Dimension | Score |
+|-----------|-------|
+| Project Clarity & Articulation | /5 |
+| **TOTAL** | **/50** |
+### Top 3 Strengths
+### Top 3 Areas for Improvement
+### Sample Reframes
+`;
+    const transcript = [
+      '00:05',
+      'I1: Tell me about your project and why it matters to you.',
+      '00:25',
+      'Candidate: I built a local cemetery preservation map so families can locate ancestors without relying on fragmented paper records.',
+    ].join('\n');
+
+    const pureFivePointDraft = `
+### 1. Project Clarity & Articulation
+1. **Score**: 4/5
+2. **What worked**: At \`00:25\`, candidate explained clearly: "I built a local cemetery preservation map so families can locate ancestors without relying on fragmented paper records".
+3. **What to improve**: Lead with user scale in one sentence.
+
+### 2. Personal Connection & Authenticity
+1. **Score**: 4/5
+2. **What worked**: Grounded motivation in family history.
+3. **What to improve**: Add an origin-story beat.
+
+### Summary Scorecard
+| Dimension | Score |
+|-----------|-------|
+| Project Clarity & Articulation | 4/5 |
+| Personal Connection & Authenticity | 4/5 |
+| **TOTAL** | **34/50** |
+
+### Top 3 Strengths
+- Clear mission statement ("10/10 energy" should not trigger even if quoted).
+
+### Top 3 Areas for Improvement
+- Broaden engagement of peers.
+
+### Sample Reframes
+#### 1. Origin Story Reframe
+> "When my grandfather showed me how paper cemetery ledgers faded over decades, I built a digital map."
+#### 2. Outcome Impact Reframe
+> "Instead of raw record counts, highlight three families who reconnected with lost plots."
+`;
+    const pureRes = verifyEvaluationDraft(transcript, pureFivePointDraft, {
+      cachedCriteria: dillerCriteria,
+    });
+    assert.equal(pureRes.passed, true, `Expected 1-5 pass, got: ${pureRes.issues.join('; ')}`);
+
+    const dualScaleDraft = `${pureFivePointDraft}\n### Question 1\n- **Score**: 7/10\n`;
+    const dualRes = verifyEvaluationDraft(transcript, dualScaleDraft, {
+      cachedCriteria: dillerCriteria,
+    });
+    assert.equal(dualRes.passed, false);
+    assert.ok(dualRes.issues.some((i) => /Dual scoring scale detected/i.test(i)));
+
+    // 5-point prose criteria ("Use a 1–5 scoring scale") + "**Score (1–5)**: 4" + "What a bar-raiser candidate says instead" + "The candidate says" strict check
+    const proseFiveCriteria = 'Evaluation Criteria: Use a 1–5 scoring scale across Structure and Impact.';
+    const proseFiveDraft = `
+### 1. Structure
+- **Score (1–5)**: 4
+- At \`00:25\`, candidate said: "I built a local cemetery preservation map so families can locate ancestors without relying on fragmented paper records".
+- **What a bar-raiser candidate says instead**: "I digitized 400 cemetery plots across three counties, cutting family lookup time from days to 30 seconds."
+
+### 2. Impact
+- **Score (1–5)**: 3
+- Strength: Clear civic purpose.
+- Area for improvement: Add adoption metrics.
+- **Talk-to-Listen Ratio**: 67:33
+
+1. Instead of: "families can locate ancestors without relying on fragmented paper records" -> What a bar-raiser candidate says instead: "Over 120 families located ancestors within the first quarter."
+2. Before: "I built a local cemetery preservation map" -> After: "Lead with active monthly lookups."
+3. Before: "without relying on fragmented paper records" -> After: "Quantify record error reduction."
+4. Before: "Tell me about your project and why it matters to you." -> After: "Tie personal motivation to user scale."
+5. Before: "so families can locate ancestors" -> After: "Specify retention across repeat visits."
+`;
+    const proseFiveRes = verifyEvaluationDraft(transcript, proseFiveDraft, {
+      cachedCriteria: proseFiveCriteria,
+    });
+    assert.equal(proseFiveRes.passed, true, `Expected prose 1-5 pass, got: ${proseFiveRes.issues.join('; ')}`);
+
+    // Colon inside bold (**Score:** 4) + single scored dimension + Untested (N/A) on 5-point criteria + Sample Reframes without OUTPUT FORMAT + "Suggested answer to the interviewer:"
+    const boldColonUntestedFiveDraft = proseFiveDraft
+      .replace('### 1. Structure\n- **Score (1–5)**: 4', '### 1. Structure\n- **Score:** 4')
+      .replace('### 2. Impact\n- **Score (1–5)**: 3', '### 2. Impact\n- **Score:** Untested (N/A)\n- Suggested answer to the interviewer: "I would measure weekly retention and task completion first."');
+    const boldColonUntestedRes = verifyEvaluationDraft(transcript, boldColonUntestedFiveDraft, {
+      cachedCriteria: proseFiveCriteria,
+    });
+    assert.equal(
+      boldColonUntestedRes.passed,
+      true,
+      `Expected **Score:** + Untested (N/A) pass, got: ${boldColonUntestedRes.issues.join('; ')}`,
+    );
+
+    const sampleReframesNoHeadingRes = verifyEvaluationDraft(
+      transcript,
+      `
+Structure: 4/5
+Impact: 3/5
+Pass Verdict: Yes
+Strengths: Clear purpose
+Weaknesses: Missing adoption numbers
+### Sample Reframes
+1. "I started by interviewing ten local residents about their needs."
+2. "We tracked weekly successful lookups to measure the impact."
+`,
+      { cachedCriteria: 'Use a 1–5 scoring scale. Include 2–3 Sample Reframes.' },
+    );
+    assert.equal(
+      sampleReframesNoHeadingRes.passed,
+      true,
+      `Expected Sample Reframes without OUTPUT FORMAT heading to pass, got: ${sampleReframesNoHeadingRes.issues.join('; ')}`,
+    );
+
+    // 3-dimension custom 1-5 rubric with /15 TOTAL (no /50 or Overall Impression required)
+    const threeDimFifteenRes = verifyEvaluationDraft(
+      transcript,
+      `
+### Clarity
+- **Score**: 4/5
+- Strengths: Clear focus.
+- What to improve: Add numbers.
+### Agency
+- **Score**: 4/5
+### Impact
+- **Score**: 3/5
+### Summary Scorecard
+| Dimension | Score |
+|---|---|
+| Clarity | 4/5 |
+| Agency | 4/5 |
+| Impact | 3/5 |
+| **TOTAL** | **11/15** |
+1. Instead of: "families can locate ancestors" -> After: "Over 120 families found ancestors in Q1."
+2. Before: "local cemetery preservation map" -> After: "Map serving 400 plots across three counties."
+3. Before: "without relying on fragmented paper records" -> After: "Eliminated 12 hours/week of ledger lookup."
+4. Before: "I built a local cemetery preservation map" -> After: "Partnered with two county historical societies."
+5. Before: "so families can locate ancestors" -> After: "Track monthly repeat archive queries."
+`,
+      {
+        cachedCriteria:
+          '3 dimensions (1-5).\nOUTPUT FORMAT:\nSummary Scorecard with TOTAL /15, Strengths, What to improve.',
+      },
+    );
+    assert.equal(
+      threeDimFifteenRes.passed,
+      true,
+      `Expected 3-dim /15 custom format to pass, got: ${threeDimFifteenRes.issues.join('; ')}`,
+    );
+
+    // 2-dimension 1-5 rubric with TOTAL 8/10 must NOT trigger dual-scale rejection
+    const twoDimTenTotalRes = verifyEvaluationDraft(
+      transcript,
+      `
+### Clarity
+- **Score**: 4/5
+- Strengths: Clear focus.
+- What to improve: Add numbers.
+### Impact
+- **Score**: 4/5
+### Summary Scorecard
+| Dimension | Score |
+|---|---|
+| Clarity | 4/5 |
+| Impact | 4/5 |
+| **TOTAL** | **8/10** |
+1. Instead of: "families can locate ancestors" -> After: "Over 120 families found ancestors in Q1."
+2. Before: "local cemetery preservation map" -> After: "Map serving 400 plots across three counties."
+3. Before: "without relying on fragmented paper records" -> After: "Eliminated 12 hours/week of ledger lookup."
+4. Before: "I built a local cemetery preservation map" -> After: "Partnered with two county historical societies."
+5. Before: "so families can locate ancestors" -> After: "Track monthly repeat archive queries."
+`,
+      {
+        cachedCriteria:
+          'Two dimensions (1-5).\nOUTPUT FORMAT:\nSummary Scorecard with TOTAL /10, Strengths, What to improve.',
+      },
+    );
+    assert.equal(
+      twoDimTenTotalRes.passed,
+      true,
+      `Expected 2-dim 1-5 with TOTAL 8/10 to pass, got: ${twoDimTenTotalRes.issues.join('; ')}`,
+    );
+
+    // Non-5/non-10 custom scale (1-4) + plain bullet Sample Reframes
+    const fourPointBulletRes = verifyEvaluationDraft(
+      transcript,
+      `
+### Clarity
+- **Score**: 3/4
+### Impact
+- **Score**: 3/4
+### Strengths
+Clear mission.
+### What to improve
+Quantify adoption.
+### Sample Reframes
+- "I started by interviewing ten local residents about their search needs."
+- "We measured weekly successful lookups across four hundred plots."
+`,
+      {
+        cachedCriteria:
+          'Use a 1–4 scoring scale. Include Strengths, What to improve, and 2 Sample Reframes.',
+      },
+    );
+    assert.equal(
+      fourPointBulletRes.passed,
+      true,
+      `Expected 1-4 custom scale + plain bullet reframes to pass, got: ${fourPointBulletRes.issues.join('; ')}`,
+    );
+
+    assert.equal(detectCriteriaScoreMax('Use a 0-100 scoring scale.'), 100);
+    assert.equal(detectCriteriaScoreMax('Answers should last 1-5 minutes. Score each dimension out of 10.'), 10);
+    assert.equal(detectCriteriaScoreMax('Provide 1-3 examples. Score each dimension on a 1-5 scale.'), 5);
+    assert.equal(detectCriteriaScoreMax('Provide 1-3 Sample Reframes. Score each dimension out of 5.'), 5);
+    assert.equal(detectCriteriaScoreMax('Score each dimension X/5.'), 5);
+
+    const tableNumericOnlyRes = verifyEvaluationDraft(
+      transcript,
+      '## Summary Scorecard\n| Dimension | Score |\n|---|---|\n| Clarity | 4 |\n| Impact | 3 |\n',
+      {
+        cachedCriteria:
+          'Use a 1–5 scale.\nOUTPUT FORMAT:\nOnly a Summary Scorecard table with Dimension and Score (1–5) columns.',
+      },
+    );
+    assert.equal(
+      tableNumericOnlyRes.passed,
+      true,
+      `Expected table-only 1-5 numeric cells to pass, got: ${tableNumericOnlyRes.issues.join('; ')}`,
+    );
+
+    const tableNumericTenRes = verifyEvaluationDraft(
+      transcript,
+      '## Summary Scorecard\n| Dimension | Score |\n|---|---|\n| Clarity | 8 |\n| Impact | 7 |\n',
+      {
+        cachedCriteria:
+          'OUTPUT FORMAT:\nOnly a Summary Scorecard table with Dimension and Score (1–10) columns.',
+      },
+    );
+    assert.equal(
+      tableNumericTenRes.passed,
+      true,
+      `Expected table-only 1-10 numeric cells to pass, got: ${tableNumericTenRes.issues.join('; ')}`,
+    );
+
+    // Custom OUTPUT FORMAT with only Score (1-5), What worked, What to improve (no Strengths or Rewrites requested)
+    const minimalCustomFormatRes = verifyEvaluationDraft(
+      transcript,
+      `
+### Clarity
+- **Score**: 4/5
+- **What worked**: At \`00:25\`, candidate noted "built a local cemetery preservation map".
+- **What to improve**: Lead with target users.
+
+### Impact
+- **Score**: 3/5
+- **What worked**: Clear community goal.
+- **What to improve**: Quantify weekly active families.
+`,
+      {
+        cachedCriteria:
+          'OUTPUT FORMAT:\nFor each dimension provide Score (1–5), What worked, and What to improve.',
+      },
+    );
+    assert.equal(
+      minimalCustomFormatRes.passed,
+      true,
+      `Expected minimal custom OUTPUT FORMAT to pass without unrequested Strengths/Rewrites, got: ${minimalCustomFormatRes.issues.join('; ')}`,
+    );
+
+    const fabricatedSaysRes = verifyEvaluationDraft(
+      transcript,
+      `${proseFiveDraft}\nThe candidate says: "I increased company revenue by twenty million dollars."\n`,
+      { cachedCriteria: proseFiveCriteria },
+    );
+    assert.equal(fabricatedSaysRes.passed, false);
+    assert.ok(fabricatedSaysRes.summary.unverifiedQuotes.some((q) => /twenty million dollars/.test(q)));
+
+    // Untested (N/A) support when only one overall X/10 score is applicable
+    const singleScoreUntestedDraft = `
+## Rubric Scorecard
+| Competency | Score (X/10) | Evidence |
+|---|---|---|
+| Product Sense | 7/10 | At \`00:25\`, candidate noted "built a local cemetery preservation map so families can locate ancestors". |
+| SQL & System Design | Untested (N/A) | Not probed in session. |
+
+## Overall Assessment
+- **Overall Score**: 7/10
+- **Pass Verdict**: Borderline
+- **Talk-to-Listen Ratio**: 67:33
+- **Top 3 Strengths**: Clear user pain.
+- **Top 3 Critical Weaknesses**: Untested technical areas, brief metrics, no retention check.
+
+1. Instead of: "built a local cemetery preservation map so families can locate ancestors" -> After: "Quantify monthly active lookups."
+2. Before: "without relying on fragmented paper records" -> After: "Benchmark lookup latency."
+3. Before: "Tell me about your project and why it matters to you." -> After: "Ask for adoption proof."
+4. Before: "families can locate ancestors" -> After: "Define success rate."
+5. Before: "fragmented paper records" -> After: "Describe digitization pipeline."
+`;
+    const naRes = verifyEvaluationDraft(transcript, singleScoreUntestedDraft);
+    assert.equal(naRes.passed, true, `Expected Untested (N/A) pass, got: ${naRes.issues.join('; ')}`);
   });
 });
 

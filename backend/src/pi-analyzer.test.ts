@@ -806,12 +806,26 @@ describe('pi-analyzer: streaming events, tool calls, intermediate text exclusion
     assert.match(promptWithCache, /Rubric Scorecard/i);
     assert.match(promptWithCache, /Markdown table/i);
     assert.match(promptWithCache, /cached criteria/i);
+    assert.match(promptWithCache, /ONLY those exact criteria/i);
+    assert.match(promptWithCache, /Untested \(N\/A\)/i);
+    assert.match(promptWithCache, /secondary_evaluation_or_notes/i);
+    assert.match(promptWithCache, /coachedSessionDetected/i);
+    assert.match(promptWithCache, /Time-Boxed Practice Drills/i);
     assert.match(promptWithCache, /candidate and hiring committee/i);
     assert.match(promptWithCache, /NEVER mention internal tools, parsers, scripts, verification loops/i);
     assert.match(promptWithCache, /\(estimated\)/);
     assert.match(promptWithCache, /instead of reporting `0:0`/);
     assert.match(promptWithCache, /When `hasTimestamps` is `true`, ALWAYS cite real/i);
     assert.match(promptWithCache, /Use `Turn #N`.*ONLY when `hasTimestamps` is `false`/i);
+
+    const fivePointPrompt = buildPiSystemPrompt(
+      'generic',
+      ['generic'],
+      'Use a 1–5 scoring scale.',
+    );
+    assert.match(fivePointPrompt, /\*\*Score: X\/5\*\*/);
+    assert.match(fivePointPrompt, /Score \(X\/5\)/);
+    assert.equal(/\*\*Score: X\/10\*\*|Score \(X\/10\)/.test(fivePointPrompt), false);
 
     let capturedSystemPrompt = '';
     const inspectPromptStream: StreamFn = (model, context) => {
@@ -854,6 +868,111 @@ describe('pi-analyzer: streaming events, tool calls, intermediate text exclusion
     assert.match(capturedSystemPrompt, /Rubric Scorecard/i);
     assert.match(capturedSystemPrompt, /NEVER mention internal tools/i);
     assert.match(capturedSystemPrompt, /\(estimated\)/);
+  });
+
+  it('forwards cachedCriteria into verify_evaluation_draft so custom 1-5 Diller drafts pass verification', async () => {
+    const dillerCriteria = `
+## EVALUATION DIMENSIONS
+### 1. Project Clarity & Articulation (1–5)
+### 2. Personal Connection & Authenticity (1–5)
+---
+## OUTPUT FORMAT
+Provide Score (1–5), What worked, What to improve.
+### Summary Scorecard
+| Dimension | Score |
+|-----------|-------|
+| **TOTAL** | **/50** |
+### Top 3 Strengths
+### Top 3 Areas for Improvement
+### Sample Reframes
+`;
+    const fivePointDraft = `
+### 1. Project Clarity & Articulation
+1. **Score**: 4/5
+2. **What worked**: Explained mission clearly.
+3. **What to improve**: Add user metrics.
+
+### 2. Personal Connection & Authenticity
+1. **Score**: 4/5
+2. **What worked**: Genuine voice.
+3. **What to improve**: Add reflection.
+
+### Summary Scorecard
+| Dimension | Score |
+|-----------|-------|
+| **TOTAL** | **40/50** |
+
+### Top 3 Strengths
+- Clear communication.
+
+### Top 3 Areas for Improvement
+- Add measurable impact.
+
+### Sample Reframes
+1. **Reframe 1**: Tighten opening.
+2. **Reframe 2**: Highlight community scale.
+`;
+
+    let step = 0;
+    const toolRoundStream: StreamFn = (model) => {
+      step += 1;
+      const stream = new AssistantMessageEventStream();
+      queueMicrotask(() => {
+        if (step === 1) {
+          const callMsg: AssistantMessage = {
+            role: 'assistant',
+            content: [
+              {
+                type: 'toolCall',
+                id: 'tc_verify_diller',
+                name: 'verify_evaluation_draft',
+                arguments: { draftMarkdown: fivePointDraft },
+              },
+            ],
+            api: model.api,
+            provider: model.provider,
+            model: model.id,
+            usage: makeUsage(20, 15),
+            stopReason: 'toolUse',
+            timestamp: Date.now(),
+          };
+          stream.push({ type: 'start', partial: callMsg });
+          stream.push({ type: 'done', reason: 'toolUse', message: callMsg });
+        } else {
+          const finalMsg: AssistantMessage = {
+            role: 'assistant',
+            content: [{ type: 'text', text: fivePointDraft }],
+            api: model.api,
+            provider: model.provider,
+            model: model.id,
+            usage: makeUsage(20, 20),
+            stopReason: 'stop',
+            timestamp: Date.now(),
+          };
+          stream.push({ type: 'start', partial: finalMsg });
+          stream.push({ type: 'done', reason: 'stop', message: finalMsg });
+        }
+      });
+      return stream;
+    };
+
+    const gen = await analyzeInterviewPi(
+      'I1: Tell me about your project.\nCandidate: We digitized records.',
+      { interviewType: 'diller', cachedCriteria: dillerCriteria },
+      toolRoundStream,
+    );
+    let telemetry: PiRunTelemetry | undefined;
+    const wrapped = (async function* () {
+      for await (const msg of gen) {
+        if (msg.type === 'raw' && msg.raw?.type === 'pi_telemetry') {
+          telemetry = msg.raw as PiRunTelemetry;
+        }
+        yield msg;
+      }
+    })();
+    await collectAnalysisSync(wrapped);
+    assert.ok(telemetry);
+    assert.equal((telemetry as PiRunTelemetry).verificationPassed, true);
   });
 });
 

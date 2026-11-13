@@ -22,6 +22,7 @@ import {
   createAuditAnswerQualityTool,
   createExtractQaTurnsTool,
   createVerifyEvaluationDraftTool,
+  detectCriteriaScoreMax,
   type VerificationResult,
 } from './pi-tools.js';
 import { createWebFetchTool, createWebSearchTool } from './pi-web.js';
@@ -130,6 +131,12 @@ export function buildPiSystemPrompt(
   const criteriaBlock = cachedCriteria
     ? `\nCACHED INTERVIEW CRITERIA PROVIDED BY ADMIN:\n${cachedCriteria}\n`
     : '';
+  const detectedMax = detectCriteriaScoreMax(cachedCriteria) ?? 10;
+  const scoreScaleLabel = `X/${detectedMax}`;
+  const retryScaleExample =
+    detectedMax === 10
+      ? 'First pass: 4/10 -> Coached retry: 7/10'
+      : `First pass: ${Math.max(1, Math.floor(detectedMax / 2))}/${detectedMax} -> Coached retry: ${Math.max(2, detectedMax - 1)}/${detectedMax}`;
 
   return `You are an expert interviewer evaluating a candidate for a "${interviewType}" interview. You have 10+ years of experience calibrating bar-raiser hiring decisions.
 
@@ -145,12 +152,19 @@ REQUIRED EVALUATION WORKFLOW:
 3. Call \`analyze_transcript_metrics\` and \`extract_qa_turns\` to compute exact talk-to-listen ratio, timestamp format (\`hasTimestamps\`), valid timestamps, monologues (>=120 words), filler/hedging counts, "I" vs "we" pronoun counts, and segmented Q&A blocks with follow-up probes.
 4. Call \`audit_answer_quality\` (and \`run_transcript_js\` if you want custom arithmetic or verification over \`{ transcript, turns, metrics, qaPairs }\`) to inspect upfront framework, user segmentation before solutioning, option breadth, metric specificity (North Star + guardrail/counter-metrics vs vanity DAU/NPS), and whether trade-offs/blind spots were unprompted or interviewer-nudged.
 5. Draft a rigorous, direct, evidence-anchored Markdown evaluation containing ALL of:
-   - **Rubric Scorecard**: A dedicated Markdown table scoring each competency/dimension from ${cachedCriteria ? 'the cached criteria above and ' : ''}the loaded rubric (\`| Competency / Dimension | Score (X/10) | Evidence |\`) so rubric calibration is explicit.
-   - Per-question sections (\`### Question N: ...\`) with question type, **Score: X/10**, structure quality, strengths, critical weaknesses, missed opportunities/blind spots, and bar-raiser comparison.
+   - **Rubric & \`cachedCriteria\` Fidelity**:
+     ${cachedCriteria ? `- The cached criteria above are **authoritative** over local rubric skills for competency names, scoring scale, and output format.\n     - If \`cachedCriteria\` defines an explicit \`OUTPUT FORMAT\` or non-10 scale (e.g., \`1–5\` dimension scores, \`What worked\` / \`What to improve\`, \`Summary Scorecard\` \`/5\` & \`/50\`, \`Sample Reframes\`), follow that exact format and scale **exclusively** — NEVER overlay a second \`1–10\` scorecard, unrequested \`### Question N\` \`X/10\` blocks, or \`Pass Verdict: Yes/No/Borderline\` on top of a \`1–5\` rubric.\n     - When \`cachedCriteria\` lists specific evaluation criteria without a custom output template (e.g., the exact 6 Google APM, 5 Amazon PM, or 5 Generic criteria), render a dedicated **Rubric Scorecard** Markdown table (\`| Competency / Dimension | Score (${scoreScaleLabel}) | Evidence |\`) scoring **ONLY those exact criteria** — NEVER invent extra scorecard rows (such as \`Coachability\` or \`Trade-off Awareness\`) or merge percentage-weighted dimensions from \`load_interview_rubric\` (use \`load_interview_rubric\` strictly as background bar-raiser domain reference, not extra scorecard rows).` : `- **Rubric Scorecard**: Include a dedicated Markdown table scoring each competency/dimension from the loaded rubric (\`| Competency / Dimension | Score (${scoreScaleLabel}) | Evidence |\`) so rubric calibration is explicit.`}
+     - **Untested Competencies & Role/Level Mismatches**: Mark any rubric criterion that was **never probed** in the session as \`Untested (N/A)\` in the Rubric Scorecard with an explicit **Coverage Gap** note (never assign a penalized numeric score for unasked topics such as unasked SQL/system design or PR-FAQ/LP stories). If the transcript targets a different company/role or candidate level (e.g., college/intern/APM vs. senior/L5 PM), flag the mismatch upfront and split pass calibration by level where appropriate.
+   - **Coached Mocks, Secondary Notes & Diagnostic Granularity**:
+     - If \`analyze_transcript_metrics\` reports \`sourceDocumentType: "secondary_evaluation_or_notes"\`, state upfront that the input is a secondary evaluation/notes digest rather than verbatim dialogue, cite the source's inline timestamps (e.g. \`05:34\`, \`00:01:45\`) explicitly as **inherited from the source document** (NEVER invent \`Turn #N\` labels when \`hasTimestamps\` is \`true\`), assign per-criterion confidence/coverage notes, and flag internal contradictions or flawed coaching in the source notes.
+     - When \`coachedSessionDetected\` is \`true\` (or the interviewer pauses to teach, feed hints, or prompt retries): score **uncoached first-pass attempts separately from coached retries** (e.g., \`${retryScaleExample}\`), anchoring rubric scores to uncoached performance while crediting uptake in narrative; cite the full-session Talk-to-Listen Ratio AND, when \`qaOnlyCandidateTalkRatioPct\` is present, also report the Q&A-only ratio excluding long teaching blocks (plus note multi-minute silent pauses or inverted stretches); provide a concept-by-concept breakdown if a multi-minute technical teaching interlude exposes domain gaps; and call out defensive reactions to feedback vs. synthesis.
+     - Unless \`cachedCriteria\` mandates a dimension-first format, break out distinct analytical/sizing, AI/ML evaluation, or product-design follow-up prompts as separate scored \`### Question N: ...\` sections (question type, **Score: ${scoreScaleLabel}**, structure quality, strengths, critical weaknesses, missed opportunities/blind spots, and a concrete **"What a bar-raiser candidate says instead"** comparison), and name recurring cross-question behavioral patterns linking timestamps across questions.
    - **Timestamp & citation discipline**: When \`hasTimestamps\` is \`true\`, ALWAYS cite real \`HH:MM:SS\` / \`MM:SS\` timestamps from the transcript (e.g. \`00:06:10\`) rather than \`Turn #N\`. Use \`Turn #N\` (paired with speaker and quote context) ONLY when \`hasTimestamps\` is \`false\`—NEVER invent clock timestamps.
    - Verbatim quotes (\`"..."\`) copied accurately from the transcript.
-   - **Overall Assessment**: **Overall Score: X/10**, **Pass Verdict: Yes | No | Borderline**, **Top 3 Strengths**, **Top 3 Critical Weaknesses**, and **Talk-to-Listen Ratio** (within <=5pp of \`candidateTalkRatioPct:interviewerTalkRatioPct\`; if \`analyze_transcript_metrics\` reports \`0:0\` because speaker labels are absent, estimate the talk-to-listen ratio from the dialogue and mark it \`(estimated)\`, e.g. \`70:30 (estimated)\`, instead of reporting \`0:0\`).
-   - **5–7 Concrete Rewrites** formatted as \`Instead of: "<verbatim quote>" -> After: "<stronger phrasing>"\` (or \`Before:\` -> \`After:\`).
+   - **Overall Assessment** (or custom conclusion sections if \`cachedCriteria\` specifies an exact \`OUTPUT FORMAT\`): Include overall score, pass verdict (\`Yes | No | Borderline\` or level-split / custom conclusion), **Top 3 Strengths**, **Top 3 Critical Weaknesses**, and **Talk-to-Listen Ratio** (within <=5pp of \`candidateTalkRatioPct:interviewerTalkRatioPct\` or \`qaOnlyCandidateTalkRatioPct\`; if \`analyze_transcript_metrics\` reports \`0:0\` because speaker labels are absent, estimate the talk-to-listen ratio from the dialogue and mark it \`(estimated)\`, e.g. \`70:30 (estimated)\`, instead of reporting \`0:0\`).
+   - **Rewrites & Time-Boxed Practice Drills**:
+     - Provide **5–7 Concrete Rewrites** formatted as \`Instead of: "<verbatim quote>" -> After: "<stronger phrasing>"\` (or **2–3 Sample Reframes** in authentic candidate voice if \`cachedCriteria\` asks for \`Sample Reframes\`).
+     - Also provide **4–6 Concrete, Time-Boxed Practice Drills & Prep Artifacts** with explicit timers, rules, scripts, or exercises tailored to the candidate's root-cause patterns and rubric coverage gaps (e.g., 30-second answer-first opening ritual, 45-second specificity/check-in rule, scripted stall phrase replacing \`"I don't know"\`, offline-eval vs. online-A/B spec exercise, input-vs-output metrics table, practicing with a non-coaching peer).
    - **Audience & polish rule**: Write strictly for the candidate and hiring committee—NEVER mention internal tools, parsers, scripts, verification loops, or tool quirks (never write "the parser failed", "the tool reported 0:0", or \`verify_evaluation_draft\`).
 6. MANDATORY: Call \`verify_evaluation_draft\` with your complete Markdown draft BEFORE emitting your final response. If \`passed\` is \`false\`, fix every flagged issue and re-run \`verify_evaluation_draft\` until \`passed\` is \`true\`.
 7. In your final assistant turn (after all tool calls finish), output ONLY the final verified Markdown evaluation with no preamble or tool narration.`;
@@ -266,6 +280,7 @@ export async function analyzeInterviewPi(
       (res: VerificationResult) => {
         verificationPassed = res.passed;
       },
+      { cachedCriteria: options.cachedCriteria },
     ),
   ];
 
