@@ -11,6 +11,7 @@ import {
   createInterviewType,
   updateInterviewType,
   deleteInterviewType,
+  getGmailAuthUrl,
   type UserRecord,
   type InviteRecord,
   type AdminRecord,
@@ -343,9 +344,20 @@ export function Admin() {
     setTypeError('')
   }
 
-  const authorizeGmail = () => {
-    const authUrl = `https://us-central1-interview-analyzer-prod.cloudfunctions.net/authorizeGmail?adminUid=${user.uid}`
-    window.open(authUrl, '_blank', 'width=600,height=700')
+  const authorizeGmail = async () => {
+    const popup = window.open('about:blank', '_blank', 'width=600,height=700')
+    try {
+      const authUrl = await getGmailAuthUrl()
+      if (popup) {
+        popup.location.href = authUrl
+      } else {
+        window.open(authUrl, '_blank', 'width=600,height=700')
+      }
+    } catch (error) {
+      popup?.close()
+      console.error('Error starting Gmail authorization:', error)
+      showError('Failed to start Gmail authorization', getErrorMessage(error))
+    }
   }
 
   const disconnectGmail = async () => {

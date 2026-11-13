@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const {onDocumentCreated} = require("firebase-functions/v2/firestore");
 const {onRequest} = require("firebase-functions/v2/https");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
@@ -14,48 +15,183 @@ const logging = new Logging();
 // Set global options
 setGlobalOptions({region: "us-central1"});
 
-// OAuth2 configuration
+// Base URLs and OAuth2 configuration
+const APP_BASE_URL = process.env.APP_BASE_URL || "https://example.com";
+const FUNCTIONS_BASE_URL = process.env.FUNCTIONS_BASE_URL || "https://example.com";
 const OAUTH_CLIENT_ID = process.env.GMAIL_OAUTH_CLIENT_ID;
 const OAUTH_CLIENT_SECRET = process.env.GMAIL_OAUTH_CLIENT_SECRET;
-const OAUTH_REDIRECT_URI = "https://us-central1-interview-analyzer-prod.cloudfunctions.net/gmailOAuthCallback";
+const OAUTH_REDIRECT_URI = process.env.GMAIL_OAUTH_REDIRECT_URI || `${FUNCTIONS_BASE_URL}/gmailOAuthCallback`;
+
+const APPROVAL_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const OAUTH_STATE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 /**
- * Initiates Gmail OAuth flow for admin
+ * Escape HTML special characters for safe interpolation into HTML responses and emails
  */
-exports.authorizeGmail = onRequest(async (req, res) => {
-  // Verify user is admin
-  const {adminUid} = req.query;
+function escapeHtml(str) {
+  return String(str ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+}
 
-  if (!adminUid) {
-    res.status(400).send("Missing adminUid parameter");
-    return;
+/**
+ * Strip CR/LF characters from email header values to prevent header injection
+ */
+function sanitizeHeader(str) {
+  return String(str ?? "").replace(/[\r\n]+/g, " ").trim();
+}
+
+/**
+ * Return a safe base URL for invite links, falling back to APP_BASE_URL
+ */
+function getSafeInviteBaseUrl(origin) {
+  if (typeof origin !== "string" || !origin.trim()) {
+    return APP_BASE_URL;
+  }
+  try {
+    const parsed = new URL(origin.trim());
+    const isLocalhost = parsed.protocol === "http:" &&
+      (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1");
+    if (parsed.protocol === "https:" || isLocalhost) {
+      return parsed.origin;
+    }
+  } catch {
+    // Fall back to configured APP_BASE_URL
+  }
+  return APP_BASE_URL;
+}
+
+/**
+ * Require APPROVAL_SECRET from environment (minimum 16 characters)
+ */
+function getApprovalSecret() {
+  const secret = process.env.APPROVAL_SECRET;
+  if (!secret || secret.length < 16) {
+    throw new Error("APPROVAL_SECRET environment variable must be set and at least 16 characters");
+  }
+  return secret;
+}
+
+/**
+ * Check whether a Firebase user is an admin via admins/{uid} or config/admins.emails
+ */
+async function isAdminUser(uid, email) {
+  const adminDoc = await admin.firestore().collection("admins").doc(uid).get();
+  if (adminDoc.exists) {
+    return true;
+  }
+  if (!email) {
+    return false;
+  }
+  const configDoc = await admin.firestore().collection("config").doc("admins").get();
+  const emails = configDoc.exists ? (configDoc.data()?.emails || []) : [];
+  return emails.map((e) => String(e).toLowerCase()).includes(email.toLowerCase());
+}
+
+/**
+ * Sign an OAuth state token as `uid.nonce.sig` using HMAC-SHA256
+ */
+function createOAuthState(uid) {
+  const secret = getApprovalSecret();
+  const nonce = `${Date.now()}-${crypto.randomBytes(16).toString("hex")}`;
+  const payload = `${uid}.${nonce}`;
+  const sig = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+  return `${payload}.${sig}`;
+}
+
+/**
+ * Verify and extract admin UID from a signed `uid.nonce.sig` OAuth state token
+ */
+function verifyOAuthState(state) {
+  if (typeof state !== "string") {
+    return null;
+  }
+  const parts = state.split(".");
+  if (parts.length !== 3) {
+    return null;
+  }
+  const [uid, nonce, sig] = parts;
+  if (!uid || !nonce || !sig) {
+    return null;
   }
 
-  // Check if user is admin
-  const adminDoc = await admin.firestore().collection("admins").doc(adminUid).get();
-  if (!adminDoc.exists) {
-    res.status(403).send("Not authorized");
-    return;
+  const ts = Number(nonce.split("-")[0]);
+  if (!Number.isFinite(ts) || Date.now() - ts > OAUTH_STATE_TTL_MS || ts > Date.now() + 60 * 1000) {
+    return null;
   }
 
-  const oauth2Client = new google.auth.OAuth2(
-      OAUTH_CLIENT_ID,
-      OAUTH_CLIENT_SECRET,
-      OAUTH_REDIRECT_URI,
-  );
+  const secret = getApprovalSecret();
+  const expectedSig = crypto
+      .createHmac("sha256", secret)
+      .update(`${uid}.${nonce}`)
+      .digest("hex");
 
-  const scopes = [
-    "https://www.googleapis.com/auth/gmail.send",
-  ];
+  const sigBuf = Buffer.from(sig, "utf8");
+  const expectedBuf = Buffer.from(expectedSig, "utf8");
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+    return null;
+  }
 
-  const authUrl = oauth2Client.generateAuthUrl({
-    access_type: "offline",
-    prompt: "consent", // Force consent to always get refresh_token
-    scope: scopes,
-    state: adminUid, // Pass admin UID in state to identify on callback
-  });
+  return uid;
+}
 
-  res.redirect(authUrl);
+/**
+ * Initiates Gmail OAuth flow for an authenticated admin
+ */
+exports.authorizeGmail = onRequest({cors: true}, async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      res.status(401).json({error: "Unauthorized: Missing token"});
+      return;
+    }
+
+    const idToken = authHeader.split("Bearer ")[1];
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(idToken);
+    } catch {
+      res.status(401).json({error: "Unauthorized: Invalid or expired token"});
+      return;
+    }
+
+    const adminAuthorized = await isAdminUser(decodedToken.uid, decodedToken.email);
+    if (!adminAuthorized) {
+      res.status(403).json({error: "Forbidden: Not an admin"});
+      return;
+    }
+
+    const oauth2Client = new google.auth.OAuth2(
+        OAUTH_CLIENT_ID,
+        OAUTH_CLIENT_SECRET,
+        OAUTH_REDIRECT_URI,
+    );
+
+    const scopes = [
+      "https://www.googleapis.com/auth/gmail.send",
+    ];
+
+    const state = createOAuthState(decodedToken.uid);
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: "offline",
+      prompt: "consent", // Force consent to always get refresh_token
+      scope: scopes,
+      state,
+    });
+
+    if (req.query.format === "json" || req.headers.accept?.includes("application/json")) {
+      res.json({authUrl});
+      return;
+    }
+
+    res.redirect(authUrl);
+  } catch (error) {
+    console.error("Error initiating Gmail OAuth:", error);
+    res.status(500).json({error: "Failed to initiate Gmail authorization"});
+  }
 });
 
 /**
@@ -69,9 +205,13 @@ exports.gmailOAuthCallback = onRequest(async (req, res) => {
     return;
   }
 
-  const adminUid = state;
-
   try {
+    const adminUid = verifyOAuthState(state);
+    if (!adminUid) {
+      res.status(403).send("Invalid or expired OAuth state");
+      return;
+    }
+
     const oauth2Client = new google.auth.OAuth2(
         OAUTH_CLIENT_ID,
         OAUTH_CLIENT_SECRET,
@@ -81,11 +221,11 @@ exports.gmailOAuthCallback = onRequest(async (req, res) => {
     // Exchange code for tokens
     const {tokens} = await oauth2Client.getToken(code);
 
-    // Store tokens in Firestore (encrypted in production!)
-    await admin.firestore().collection("admins").doc(adminUid).update({
+    // Store tokens in Firestore
+    await admin.firestore().collection("admins").doc(adminUid).set({
       gmailTokens: tokens,
       gmailAuthorizedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    }, {merge: true});
 
     res.send(`
       <!DOCTYPE html>
@@ -130,7 +270,7 @@ exports.gmailOAuthCallback = onRequest(async (req, res) => {
     `);
   } catch (error) {
     console.error("Error during OAuth callback:", error);
-    res.status(500).send(`Error: ${error.message}`);
+    res.status(500).send(`Error: ${escapeHtml(error.message)}`);
   }
 });
 
@@ -159,7 +299,8 @@ exports.sendApprovalEmail = onDocumentCreated("users/{userId}", async (event) =>
     return;
   }
 
-  const approveUrl = `https://us-central1-interview-analyzer-prod.cloudfunctions.net/approveUser?userId=${userId}&token=${generateToken(userId)}`;
+  const token = generateToken(userId);
+  const approveUrl = `${FUNCTIONS_BASE_URL}/approveUser?userId=${encodeURIComponent(userId)}&token=${encodeURIComponent(token)}`;
 
   // Get first admin with Gmail tokens
   const adminsSnapshot = await admin.firestore().collection("admins").get();
@@ -174,16 +315,8 @@ exports.sendApprovalEmail = onDocumentCreated("users/{userId}", async (event) =>
   }
 
   if (!adminWithGmail) {
-    console.log("No admin with Gmail authorization found. Logging instead:");
-    console.log(`
-📧 New User Signup Notification
-================================
-User Email: ${userData.email}
-User ID: ${userId}
-Signed up: ${userData.createdAt}
-
-Approve URL: ${approveUrl}
-    `);
+    console.log("No admin with Gmail authorization found. Approval email not sent; approve via Admin Dashboard.");
+    console.log(`New user signup pending approval: userId=${userId}`);
     return;
   }
 
@@ -199,9 +332,15 @@ Approve URL: ${approveUrl}
 
     const gmail = google.gmail({version: "v1", auth: oauth2Client});
 
-    const emailContent = `From: ${adminWithGmail.email}
-To: ${adminWithGmail.email}
-Subject: New User Signup: ${userData.email}
+    const safeEmail = escapeHtml(userData.email);
+    const safeUserId = escapeHtml(userId);
+    const safeSignedUp = escapeHtml(new Date(userData.createdAt).toLocaleString());
+    const safeApproveUrl = escapeHtml(approveUrl);
+    const safeDashboardUrl = escapeHtml(APP_BASE_URL);
+
+    const emailContent = `From: ${sanitizeHeader(adminWithGmail.email)}
+To: ${sanitizeHeader(adminWithGmail.email)}
+Subject: New User Signup: ${sanitizeHeader(userData.email)}
 Content-Type: text/html; charset=utf-8
 
 <html>
@@ -210,20 +349,20 @@ Content-Type: text/html; charset=utf-8
   <p>A new user has signed up for Interview Analyzer and is pending approval:</p>
 
   <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 20px 0;">
-    <p style="margin: 5px 0;"><strong>Email:</strong> ${userData.email}</p>
-    <p style="margin: 5px 0;"><strong>User ID:</strong> ${userId}</p>
-    <p style="margin: 5px 0;"><strong>Signed up:</strong> ${new Date(userData.createdAt).toLocaleString()}</p>
+    <p style="margin: 5px 0;"><strong>Email:</strong> ${safeEmail}</p>
+    <p style="margin: 5px 0;"><strong>User ID:</strong> ${safeUserId}</p>
+    <p style="margin: 5px 0;"><strong>Signed up:</strong> ${safeSignedUp}</p>
   </div>
 
   <p style="margin: 30px 0;">
-    <a href="${approveUrl}"
+    <a href="${safeApproveUrl}"
        style="background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
       ✓ Approve User
     </a>
   </p>
 
   <p style="color: #666; font-size: 14px;">
-    Or approve manually in the <a href="https://interview-analyzer-prod.web.app">Admin Dashboard</a>.
+    Or approve manually in the <a href="${safeDashboardUrl}">Admin Dashboard</a>.
   </p>
 </body>
 </html>`;
@@ -243,47 +382,113 @@ Content-Type: text/html; charset=utf-8
 
     console.log(`✅ Approval email sent to ${adminWithGmail.email} for user ${userData.email}`);
   } catch (error) {
-    console.error("Error sending email:", error);
-    // Fall back to logging
-    console.log(`
-📧 New User Signup Notification (email failed)
-================================
-User Email: ${userData.email}
-User ID: ${userId}
-Approve URL: ${approveUrl}
-    `);
+    console.error("Error sending approval email:", error);
+    console.log(`Approval email failed for userId=${userId}; approve manually via Admin Dashboard.`);
   }
 
   return null;
 });
 
 /**
- * One-click approval endpoint
+ * Two-step user approval endpoint:
+ * - GET renders an HTML confirmation form (prevents email link-scanner prefetch auto-approval)
+ * - POST verifies the signed token and marks the user approved in Firestore
  */
 exports.approveUser = onRequest(async (req, res) => {
-  const {userId, token} = req.query;
+  res.set("Cache-Control", "no-store");
 
-  if (!userId || !token) {
-    res.status(400).send("Missing userId or token");
+  if (req.method !== "GET" && req.method !== "POST") {
+    res.status(405).send("Method Not Allowed");
     return;
   }
 
-  // Verify token
-  if (!verifyToken(userId, token)) {
-    res.status(403).send("Invalid token");
+  const userId = req.method === "POST" ? (req.body?.userId || req.query.userId) : req.query.userId;
+  const token = req.method === "POST" ? (req.body?.token || req.query.token) : req.query.token;
+
+  if (!userId || !token || typeof userId !== "string" || typeof token !== "string" || userId.includes("/")) {
+    res.status(400).send("Missing or invalid userId or token");
     return;
   }
 
   try {
-    // Update user approval status
-    await admin.firestore().collection("users").doc(userId).update({
+    if (!verifyToken(userId, token)) {
+      res.status(403).send("Invalid or expired token");
+      return;
+    }
+
+    const userRef = admin.firestore().collection("users").doc(userId);
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) {
+      res.status(404).send("User not found");
+      return;
+    }
+
+    const userData = userDoc.data();
+    const safeEmail = escapeHtml(userData?.email || "N/A");
+    const safeUserId = escapeHtml(userId);
+
+    if (req.method === "GET") {
+      const safeToken = escapeHtml(token);
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Confirm User Approval</title>
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              max-width: 600px;
+              margin: 50px auto;
+              padding: 20px;
+              background: #fafafa;
+            }
+            .card {
+              background: white;
+              border-radius: 8px;
+              padding: 30px;
+              box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            }
+            h1 { color: #111827; margin-top: 0; }
+            .info { background: #f5f5f5; padding: 15px; border-radius: 6px; margin: 20px 0; }
+            .info p { margin: 5px 0; }
+            button {
+              background: #10b981;
+              color: white;
+              border: none;
+              padding: 12px 24px;
+              border-radius: 6px;
+              font-size: 16px;
+              font-weight: 500;
+              cursor: pointer;
+            }
+            button:hover { background: #059669; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h1>Confirm User Approval</h1>
+            <p>Click the button below to approve access for this user:</p>
+            <div class="info">
+              <p><strong>Email:</strong> ${safeEmail}</p>
+              <p><strong>User ID:</strong> ${safeUserId}</p>
+            </div>
+            <form method="POST" action="">
+              <input type="hidden" name="userId" value="${safeUserId}" />
+              <input type="hidden" name="token" value="${safeToken}" />
+              <button type="submit">✓ Confirm Approval</button>
+            </form>
+          </div>
+        </body>
+        </html>
+      `);
+      return;
+    }
+
+    // POST: perform approval update
+    await userRef.update({
       approved: true,
       approvedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-
-    // Get user data
-    const userDoc = await admin.firestore().collection("users").doc(userId).get();
-    const userData = userDoc.data();
 
     res.send(`
       <!DOCTYPE html>
@@ -314,8 +519,8 @@ exports.approveUser = onRequest(async (req, res) => {
           <h1>✅ User Approved!</h1>
           <p>The user has been successfully approved and can now access the application.</p>
           <div class="info">
-            <p><strong>Email:</strong> ${userData?.email || "N/A"}</p>
-            <p><strong>User ID:</strong> ${userId}</p>
+            <p><strong>Email:</strong> ${safeEmail}</p>
+            <p><strong>User ID:</strong> ${safeUserId}</p>
             <p><strong>Approved:</strong> Just now</p>
           </div>
           <p>The user will automatically gain access - no page refresh needed on their end!</p>
@@ -325,7 +530,7 @@ exports.approveUser = onRequest(async (req, res) => {
     `);
   } catch (error) {
     console.error("Error approving user:", error);
-    res.status(500).send(`Error approving user: ${error.message}`);
+    res.status(500).send(`Error approving user: ${escapeHtml(error.message)}`);
   }
 });
 
@@ -347,23 +552,15 @@ exports.sendInviteEmail = onDocumentCreated("invites/{inviteId}", async (event) 
     return;
   }
 
-  const baseUrl = inviteData.origin || "https://interview-analyzer-web.fly.dev";
-  const signupUrl = `${baseUrl}/?invite=${inviteData.token}`;
+  const baseUrl = getSafeInviteBaseUrl(inviteData.origin);
+  const signupUrl = `${baseUrl}/?invite=${encodeURIComponent(inviteData.token)}`;
 
   // Get the admin who sent the invite
   const adminDoc = await admin.firestore().collection("admins").doc(inviteData.invitedBy).get();
   const adminData = adminDoc.exists ? adminDoc.data() : null;
 
   if (!adminData?.gmailTokens) {
-    console.log("Admin has no Gmail authorization. Logging instead:");
-    console.log(`
-📧 Invite Email
-================================
-Invited: ${inviteData.email}
-Invite ID: ${inviteId}
-Signup URL: ${signupUrl}
-Expires: ${inviteData.expiresAt}
-    `);
+    console.log(`Admin has no Gmail authorization; invite email not sent for inviteId=${inviteId}.`);
 
     // Update invite document with email failure status
     await admin.firestore().collection("invites").doc(inviteId).update({
@@ -385,8 +582,11 @@ Expires: ${inviteData.expiresAt}
 
     const gmail = google.gmail({version: "v1", auth: oauth2Client});
 
-    const emailContent = `From: ${adminData.email}
-To: ${inviteData.email}
+    const safeSignupUrl = escapeHtml(signupUrl);
+    const safeInviteEmail = escapeHtml(inviteData.email);
+
+    const emailContent = `From: ${sanitizeHeader(adminData.email)}
+To: ${sanitizeHeader(inviteData.email)}
 Subject: You're invited to Interview Analyzer
 Content-Type: text/html; charset=utf-8
 
@@ -396,7 +596,7 @@ Content-Type: text/html; charset=utf-8
   <p>You've been invited to join Interview Analyzer - a tool that provides thoughtful, constructive feedback on your PM interview practice.</p>
 
   <p style="margin: 30px 0;">
-    <a href="${signupUrl}"
+    <a href="${safeSignupUrl}"
        style="background: #6366f1; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: 500;">
       Accept Invitation
     </a>
@@ -407,7 +607,7 @@ Content-Type: text/html; charset=utf-8
   </p>
 
   <p style="color: #666; font-size: 14px;">
-    Simply click the button above and sign in with your Google account (${inviteData.email}) to get started.
+    Simply click the button above and sign in with your Google account (${safeInviteEmail}) to get started.
   </p>
 </body>
 </html>`;
@@ -441,13 +641,7 @@ Content-Type: text/html; charset=utf-8
       emailError: error.message || "Unknown error",
     });
 
-    console.log(`
-📧 Invite Email (email failed)
-================================
-Invited: ${inviteData.email}
-Signup URL: ${signupUrl}
-Error: ${error.message}
-    `);
+    console.log(`Invite email failed for inviteId=${inviteId}: ${error.message}`);
   }
 
   return null;
@@ -501,19 +695,47 @@ exports.refreshGmailTokens = onSchedule("every monday 09:00", async () => {
 });
 
 /**
- * Generate a simple token for approval link
+ * Generate a signed HMAC-SHA256 approval token with expiration (`exp.sig`)
  */
 function generateToken(userId) {
-  const secret = process.env.APPROVAL_SECRET || "interview-analyzer-secret";
-  const crypto = require("crypto");
-  return crypto.createHmac("sha256", secret).update(userId).digest("hex").substring(0, 16);
+  const secret = getApprovalSecret();
+  const exp = Date.now() + APPROVAL_TOKEN_TTL_MS;
+  const sig = crypto
+      .createHmac("sha256", secret)
+      .update(`${userId}.${exp}`)
+      .digest("hex");
+  return `${exp}.${sig}`;
 }
 
 /**
- * Verify the approval token
+ * Verify an approval token (`exp.sig`) using constant-time comparison
  */
 function verifyToken(userId, token) {
-  return token === generateToken(userId);
+  if (typeof userId !== "string" || typeof token !== "string") {
+    return false;
+  }
+  const parts = token.split(".");
+  if (parts.length !== 2) {
+    return false;
+  }
+  const [expStr, sig] = parts;
+  const exp = Number(expStr);
+  if (!Number.isFinite(exp) || exp <= Date.now()) {
+    return false;
+  }
+
+  const secret = getApprovalSecret();
+  const expectedSig = crypto
+      .createHmac("sha256", secret)
+      .update(`${userId}.${expStr}`)
+      .digest("hex");
+
+  const sigBuf = Buffer.from(sig, "utf8");
+  const expectedBuf = Buffer.from(expectedSig, "utf8");
+  if (sigBuf.length !== expectedBuf.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(sigBuf, expectedBuf);
 }
 
 /**
@@ -574,31 +796,30 @@ exports.fetchLogs = onRequest({cors: true}, async (req, res) => {
 
     const idToken = authHeader.split("Bearer ")[1];
     const decodedToken = await admin.auth().verifyIdToken(idToken);
-    const uid = decodedToken.uid;
-
-    // Check if user is admin
-    const adminDoc = await admin.firestore().collection("admins").doc(uid).get();
-    if (!adminDoc.exists) {
-      // Also check config/admins for email-based admin
-      const configDoc = await admin.firestore().collection("config").doc("admins").get();
-      const emails = configDoc.exists ? (configDoc.data()?.emails || []) : [];
-      if (!emails.includes(decodedToken.email?.toLowerCase())) {
-        res.status(403).json({error: "Forbidden: Not an admin"});
-        return;
-      }
+    const adminAuthorized = await isAdminUser(decodedToken.uid, decodedToken.email);
+    if (!adminAuthorized) {
+      res.status(403).json({error: "Forbidden: Not an admin"});
+      return;
     }
 
-    // Parse query parameters
-    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
-    const severity = req.query.severity; // DEBUG, INFO, WARNING, ERROR
-    const hoursAgo = parseInt(req.query.hoursAgo) || 24;
+    // Parse and validate query parameters
+    const ALLOWED_SEVERITIES = new Set(["DEBUG", "INFO", "WARNING", "ERROR", "DEFAULT"]);
+    const rawLimit = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 500) : 100;
+    const severity = typeof req.query.severity === "string" ? req.query.severity.toUpperCase() : undefined;
+    if (severity && !ALLOWED_SEVERITIES.has(severity)) {
+      res.status(400).json({error: "Invalid severity filter"});
+      return;
+    }
+    const rawHours = parseInt(req.query.hoursAgo, 10);
+    const hoursAgo = Number.isFinite(rawHours) && rawHours > 0 ? Math.min(rawHours, 168) : 24;
 
     // Build log filter - include both Cloud Functions and Cloud Run (Functions v2 uses Cloud Run)
     const startTime = new Date(Date.now() - hoursAgo * 60 * 60 * 1000);
 
     let filter = `(resource.type="cloud_function" OR resource.type="cloud_run_revision") AND timestamp >= "${startTime.toISOString()}"`;
     if (severity) {
-      filter += ` AND severity="${severity.toUpperCase()}"`;
+      filter += ` AND severity="${severity}"`;
     }
 
     // Query logs
@@ -644,6 +865,6 @@ exports.fetchLogs = onRequest({cors: true}, async (req, res) => {
     });
   } catch (error) {
     console.error("Error fetching logs:", error);
-    res.status(500).json({error: error.message});
+    res.status(500).json({error: "Failed to fetch logs"});
   }
 });

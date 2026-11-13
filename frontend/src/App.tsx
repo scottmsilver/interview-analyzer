@@ -14,6 +14,7 @@ import { CopyIcon } from './icons'
 import { useToast, useCopyToClipboard } from './hooks'
 import { generateShareId, formatDateTime } from './types'
 import {
+  API_URL,
   subscribeToAuthState,
   isUserAdmin,
   getUser,
@@ -224,11 +225,6 @@ function MainContent() {
   const [analysisStartTime, setAnalysisStartTime] = useState<number | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
 
-  // API URL configuration
-  // In production, you need to deploy your backend somewhere (e.g., Heroku, Railway, Render)
-  // and update this URL accordingly
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:9002'
-
   // Fetch interview types on mount
   useEffect(() => {
     getInterviewTypes().then((types) => {
@@ -244,7 +240,8 @@ function MainContent() {
 
   // Show warning in console if API URL might be misconfigured
   useEffect(() => {
-    if (window.location.hostname !== 'localhost' &&
+    if (API_URL !== '' &&
+        window.location.hostname !== 'localhost' &&
         window.location.hostname !== '127.0.0.1' &&
         API_URL.includes('localhost')) {
       console.warn('⚠️ API URL is set to localhost but app is running in production!')
@@ -437,13 +434,26 @@ function MainContent() {
     }
 
     try {
+      const idToken = await user.getIdToken()
       const response = await fetch(`${API_URL}/api/analyze/stream`, {
         method: 'POST',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+        },
         body: formData,
       })
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        let errorMessage = `HTTP error! status: ${response.status}`
+        try {
+          const errorData = await response.json() as { error?: string }
+          if (errorData?.error) {
+            errorMessage = errorData.error
+          }
+        } catch {
+          // Ignore non-JSON error responses
+        }
+        throw new Error(errorMessage)
       }
 
       const reader = response.body?.getReader()

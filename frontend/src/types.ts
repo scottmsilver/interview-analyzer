@@ -41,9 +41,18 @@ export function getErrorMessage(error: unknown): string {
 
 export function generateShareId(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+  const length = 16
+  const maxValid = Math.floor(256 / chars.length) * chars.length
   let result = ''
-  for (let i = 0; i < 12; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length))
+  while (result.length < length) {
+    const bytes = new Uint8Array(length * 2)
+    crypto.getRandomValues(bytes)
+    for (const byte of bytes) {
+      if (byte < maxValid) {
+        result += chars.charAt(byte % chars.length)
+        if (result.length === length) break
+      }
+    }
   }
   return result
 }

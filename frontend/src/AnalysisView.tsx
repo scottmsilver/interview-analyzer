@@ -56,10 +56,25 @@ export function AnalysisView() {
     copyMarkdownContent('.markdown-body', analysis.analysis)
   }
 
+  const ownerEmail = user.email?.trim().toLowerCase() || ''
+
+  const mergeOwnerEmail = (emails: string[]) =>
+    Array.from(new Set([...(ownerEmail ? [ownerEmail] : []), ...emails]))
+
+  const selectShareMode = (mode: 'private' | 'anyone' | 'specific') => {
+    setShareMode(mode)
+    if (mode === 'specific' && !sharedEmails.trim() && ownerEmail) {
+      setSharedEmails(ownerEmail)
+    }
+  }
+
   const openShareModal = () => {
     if (analysis) {
-      setShareMode(analysis.shareMode || 'private')
-      setSharedEmails((analysis.sharedWith || []).join(', '))
+      const mode = analysis.shareMode || 'private'
+      setShareMode(mode)
+      const existing = (analysis.sharedWith || []).map(e => e.trim().toLowerCase()).filter(Boolean)
+      const initial = mode === 'specific' ? mergeOwnerEmail(existing) : existing
+      setSharedEmails(initial.join(', '))
     }
     setShowShareModal(true)
   }
@@ -69,9 +84,10 @@ export function AnalysisView() {
 
     setSavingShare(true)
     try {
-      const emails = shareMode === 'specific'
+      const parsedEmails = shareMode === 'specific'
         ? sharedEmails.split(',').map(e => e.trim().toLowerCase()).filter(e => e.includes('@'))
         : []
+      const emails = shareMode === 'specific' ? mergeOwnerEmail(parsedEmails) : []
 
       await updateAnalysisSharing(analysisId, shareMode, emails)
 
@@ -196,13 +212,13 @@ export function AnalysisView() {
               <div className="share-options">
                 <label
                   className={`share-option ${shareMode === 'private' ? 'selected' : ''}`}
-                  onClick={() => setShareMode('private')}
+                  onClick={() => selectShareMode('private')}
                 >
                   <input
                     type="radio"
                     name="shareMode"
                     checked={shareMode === 'private'}
-                    onChange={() => setShareMode('private')}
+                    onChange={() => selectShareMode('private')}
                   />
                   <div className="share-option-content">
                     <div className="share-option-label">Private</div>
@@ -211,13 +227,13 @@ export function AnalysisView() {
                 </label>
                 <label
                   className={`share-option ${shareMode === 'anyone' ? 'selected' : ''}`}
-                  onClick={() => setShareMode('anyone')}
+                  onClick={() => selectShareMode('anyone')}
                 >
                   <input
                     type="radio"
                     name="shareMode"
                     checked={shareMode === 'anyone'}
-                    onChange={() => setShareMode('anyone')}
+                    onChange={() => selectShareMode('anyone')}
                   />
                   <div className="share-option-content">
                     <div className="share-option-label">Anyone with link</div>
@@ -226,13 +242,13 @@ export function AnalysisView() {
                 </label>
                 <label
                   className={`share-option ${shareMode === 'specific' ? 'selected' : ''}`}
-                  onClick={() => setShareMode('specific')}
+                  onClick={() => selectShareMode('specific')}
                 >
                   <input
                     type="radio"
                     name="shareMode"
                     checked={shareMode === 'specific'}
-                    onChange={() => setShareMode('specific')}
+                    onChange={() => selectShareMode('specific')}
                   />
                   <div className="share-option-content">
                     <div className="share-option-label">Specific people</div>
@@ -246,7 +262,9 @@ export function AnalysisView() {
                           onChange={(e) => setSharedEmails(e.target.value)}
                           onClick={(e) => e.stopPropagation()}
                         />
-                        <div className="share-emails-hint">Separate multiple emails with commas</div>
+                        <div className="share-emails-hint">
+                          Separate multiple emails with commas{ownerEmail ? ` (your email ${ownerEmail} is always included)` : ''}
+                        </div>
                       </div>
                     )}
                   </div>

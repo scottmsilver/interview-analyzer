@@ -1,17 +1,16 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { getAnalysisByShareId, subscribeToAuthState, type User } from './api'
+import { fetchSharedAnalysis, subscribeToAuthState, type SharedAnalysisPayload, type User } from './api'
 import { Toast, AnalysisMarkdown, Loading, ErrorBox, AnalysisHeader } from './components'
 import { CopyIcon } from './icons'
 import { useToast, useCopyToClipboard } from './hooks'
-import { type AnalysisData } from './types'
 import './AnalysisView.css'
 
 export function SharedView() {
   const { shareId } = useParams<{ shareId: string }>()
   const [user, setUser] = useState<User | null>(null)
   const [authReady, setAuthReady] = useState(false)
-  const [analysis, setAnalysis] = useState<AnalysisData | null>(null)
+  const [analysis, setAnalysis] = useState<SharedAnalysisPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -32,6 +31,9 @@ export function SharedView() {
     if (!authReady) return
 
     const loadSharedAnalysis = async () => {
+      setLoading(true)
+      setError('')
+
       if (!shareId) {
         setError('No share ID provided')
         setLoading(false)
@@ -39,47 +41,26 @@ export function SharedView() {
       }
 
       try {
-        const data = await getAnalysisByShareId(shareId)
+        const idToken = user ? await user.getIdToken() : undefined
+        const result = await fetchSharedAnalysis(shareId, idToken)
 
-        if (!data) {
+        if (result.ok) {
+          setAnalysis(result.analysis)
+          setLoading(false)
+          return
+        }
+
+        if (result.code === 'NOT_FOUND') {
           setError('Shared analysis not found')
-          setLoading(false)
-          return
-        }
-
-        // Check sharing permissions
-        if (data.shareMode === 'private') {
+        } else if (result.code === 'PRIVATE') {
           setError('This analysis is not shared')
-          setLoading(false)
-          return
+        } else if (result.code === 'AUTH_REQUIRED') {
+          setError('Please sign in to view this shared analysis')
+        } else if (result.code === 'FORBIDDEN') {
+          setError('You do not have permission to view this analysis')
+        } else {
+          setError(result.error || 'Failed to load shared analysis')
         }
-
-        // For 'anyone' mode, no auth check needed
-        if (data.shareMode === 'anyone') {
-          setAnalysis(data)
-          setLoading(false)
-          return
-        }
-
-        // For 'specific' mode, check if user's email is in sharedWith
-        if (data.shareMode === 'specific') {
-          if (!user) {
-            setError('Please sign in to view this shared analysis')
-            setLoading(false)
-            return
-          }
-          if (!(data.sharedWith || []).includes(user.email || '')) {
-            setError('You do not have permission to view this analysis')
-            setLoading(false)
-            return
-          }
-          setAnalysis(data)
-          setLoading(false)
-          return
-        }
-
-        // Fallback: if shareMode is undefined/null, treat as private
-        setError('This analysis is not shared')
         setLoading(false)
       } catch (err) {
         console.error('Error loading shared analysis:', err)

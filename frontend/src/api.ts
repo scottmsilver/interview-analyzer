@@ -26,6 +26,12 @@ import { type AnalysisData } from './types'
 // Re-export User type for convenience
 export type { User }
 
+// Backend API base URL (empty string in production builds for same-origin `/api/*` requests)
+export const API_URL =
+  import.meta.env.VITE_API_URL !== undefined
+    ? import.meta.env.VITE_API_URL
+    : (import.meta.env.DEV ? 'http://localhost:9002' : '')
+
 // =============================================================================
 // Auth API
 // =============================================================================
@@ -214,11 +220,64 @@ export function subscribeToUserAnalyses(
   })
 }
 
-export async function getAnalysisByShareId(shareId: string): Promise<AnalysisData | null> {
-  const q = query(collection(db, 'analyses'), where('shareId', '==', shareId))
-  const snapshot = await getDocs(q)
-  if (snapshot.empty) return null
-  return snapshot.docs[0].data() as AnalysisData
+export type SharedAnalysisPayload = Pick<
+  AnalysisData,
+  'title' | 'interviewType' | 'transcriptFileName' | 'analysis' | 'shareMode' | 'createdAt' | 'savedAt'
+>
+
+export type SharedAnalysisErrorCode =
+  | 'NOT_FOUND'
+  | 'PRIVATE'
+  | 'AUTH_REQUIRED'
+  | 'FORBIDDEN'
+  | 'INVALID_ID'
+  | 'ERROR'
+
+export type FetchSharedAnalysisResult =
+  | { ok: true; status: 200; analysis: SharedAnalysisPayload }
+  | { ok: false; status: number; code: SharedAnalysisErrorCode; error: string }
+
+export async function fetchSharedAnalysis(
+  shareId: string,
+  idToken?: string
+): Promise<FetchSharedAnalysisResult> {
+  const headers: Record<string, string> = {}
+  if (idToken) {
+    headers.Authorization = `Bearer ${idToken}`
+  }
+
+  const response = await fetch(`${API_URL}/api/shared/${encodeURIComponent(shareId)}`, {
+    headers,
+  })
+
+  const body = await response.json().catch(() => ({}))
+
+  if (response.ok) {
+    return {
+      ok: true,
+      status: 200,
+      analysis: body as SharedAnalysisPayload,
+    }
+  }
+
+  const code =
+    (body?.code as SharedAnalysisErrorCode | undefined) ||
+    (response.status === 404
+      ? 'NOT_FOUND'
+      : response.status === 401
+        ? 'AUTH_REQUIRED'
+        : response.status === 403
+          ? 'FORBIDDEN'
+          : response.status === 400
+            ? 'INVALID_ID'
+            : 'ERROR')
+
+  return {
+    ok: false,
+    status: response.status,
+    code,
+    error: body?.error || `HTTP ${response.status}`,
+  }
 }
 
 // =============================================================================
@@ -402,9 +461,42 @@ export interface FetchLogsResponse {
   }
 }
 
-const FUNCTIONS_BASE_URL = 'https://us-central1-interview-analyzer-prod.cloudfunctions.net'
+const FUNCTIONS_BASE_URL = import.meta.env.VITE_FUNCTIONS_BASE_URL || ''
+
+export async function getGmailAuthUrl(): Promise<string> {
+  if (!FUNCTIONS_BASE_URL) {
+    throw new Error('Cloud Functions URL is not configured (VITE_FUNCTIONS_BASE_URL)')
+  }
+
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('Not authenticated')
+  }
+
+  const idToken = await user.getIdToken()
+  const response = await fetch(`${FUNCTIONS_BASE_URL}/authorizeGmail?format=json`, {
+    headers: {
+      'Authorization': `Bearer ${idToken}`,
+    },
+  })
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+    throw new Error(errorData.error || `HTTP ${response.status}`)
+  }
+
+  const data = await response.json() as { authUrl?: string }
+  if (!data.authUrl) {
+    throw new Error('Missing authUrl in response')
+  }
+  return data.authUrl
+}
 
 export async function fetchLogs(params: FetchLogsParams = {}): Promise<FetchLogsResponse> {
+  if (!FUNCTIONS_BASE_URL) {
+    throw new Error('Cloud Functions URL is not configured (VITE_FUNCTIONS_BASE_URL)')
+  }
+
   const user = auth.currentUser
   if (!user) {
     throw new Error('Not authenticated')
