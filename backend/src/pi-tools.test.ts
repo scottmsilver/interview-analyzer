@@ -110,6 +110,18 @@ describe('pi-tools: transcript parsing, metrics, Q&A segmentation, quality audit
     assert.equal(vtt.timestampFormat, 'vtt');
     assert.equal(vtt.turns.length, 2);
 
+    const vttNoSpeaker = parseTranscript(
+      'WEBVTT\n\n1\n00:00:05.000 --> 00:00:10.000\nFirst cue text.\n\n2\n00:00:12.000 --> 00:00:20.000\nSecond cue text.',
+    );
+    assert.equal(vttNoSpeaker.hasTimestamps, true);
+    assert.equal(vttNoSpeaker.timestampFormat, 'vtt');
+    assert.equal(vttNoSpeaker.turns.length, 2);
+    assert.equal(vttNoSpeaker.turns[0].timestampFormatted, '00:00:05');
+    assert.equal(vttNoSpeaker.turns[0].text, 'First cue text.');
+    assert.equal(vttNoSpeaker.turns[1].timestampFormatted, '00:00:12');
+    assert.equal(vttNoSpeaker.turns[1].text, 'Second cue text.');
+    assert.deepEqual(vttNoSpeaker.validTimestamps, ['00:00:05', '00:00:12']);
+
     const otter = parseTranscript('Interviewer  0:10\nTell me about a product.\n\nCandidate  0:25\nSure, let me frame this.');
     assert.equal(otter.hasTimestamps, true);
     assert.equal(otter.timestampFormat, 'otter');

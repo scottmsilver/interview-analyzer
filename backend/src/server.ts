@@ -281,7 +281,17 @@ export function createApp(deps: ServerDeps = {}) {
     upload.single('transcript'),
     async (req: Request, res: Response) => {
       try {
-        if (!hasLlmCredentials()) {
+        // Get and validate analysis method (default to direct-api for speed)
+        const rawMethod = req.body.method as unknown;
+        if (rawMethod !== undefined && rawMethod !== '' && !isValidAnalysisMethod(rawMethod)) {
+          return res.status(400).json({
+            error: `Invalid method. Allowed: ${[...VALID_ANALYSIS_METHODS].join(', ')}`
+          });
+        }
+        const method: AnalysisMethod =
+          rawMethod && isValidAnalysisMethod(rawMethod) ? rawMethod : 'direct-api';
+
+        if (!hasLlmCredentials(method)) {
           return res.status(500).json({
             error: 'Server configuration error: LLM credentials not configured'
           });
@@ -324,15 +334,6 @@ export function createApp(deps: ServerDeps = {}) {
           }
         }
 
-        // Get and validate analysis method (default to direct-api for speed)
-        const rawMethod = req.body.method as unknown;
-        if (rawMethod !== undefined && rawMethod !== '' && !isValidAnalysisMethod(rawMethod)) {
-          return res.status(400).json({
-            error: `Invalid method. Allowed: ${[...VALID_ANALYSIS_METHODS].join(', ')}`
-          });
-        }
-        const method: AnalysisMethod =
-          rawMethod && isValidAnalysisMethod(rawMethod) ? rawMethod : 'direct-api';
         const methodLabel =
           method === 'agent-sdk'
             ? 'Agent SDK (thorough)'
@@ -450,7 +451,15 @@ export function createApp(deps: ServerDeps = {}) {
     upload.single('transcript'),
     async (req: Request, res: Response) => {
       try {
-        if (!hasLlmCredentials()) {
+        const rawMethod = req.body.method as unknown;
+        if (rawMethod !== undefined && rawMethod !== '' && !isValidAnalysisMethod(rawMethod)) {
+          return res.status(400).json({
+            error: `Invalid method. Allowed: ${[...VALID_ANALYSIS_METHODS].join(', ')}`
+          });
+        }
+        const method = rawMethod && isValidAnalysisMethod(rawMethod) ? rawMethod : undefined;
+
+        if (!hasLlmCredentials(method)) {
           return res.status(500).json({
             error: 'Server configuration error: LLM credentials not configured'
           });
@@ -492,14 +501,6 @@ export function createApp(deps: ServerDeps = {}) {
             });
           }
         }
-
-        const rawMethod = req.body.method as unknown;
-        if (rawMethod !== undefined && rawMethod !== '' && !isValidAnalysisMethod(rawMethod)) {
-          return res.status(400).json({
-            error: `Invalid method. Allowed: ${[...VALID_ANALYSIS_METHODS].join(', ')}`
-          });
-        }
-        const method = rawMethod && isValidAnalysisMethod(rawMethod) ? rawMethod : undefined;
 
         const model = (req.body.model as string) || undefined;
 

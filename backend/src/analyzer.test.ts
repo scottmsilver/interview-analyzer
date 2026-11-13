@@ -20,6 +20,8 @@ const ENV_KEYS = [
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_MODEL',
   'MANIFEST_AUTH_TYPE',
+  'OPENAI_API_KEY',
+  'PI_LLM_API',
   'BRAVE_API_KEY',
   'ADMIN_API_KEY',
   'FIREBASE_SERVICE_ACCOUNT_JSON'
@@ -48,6 +50,9 @@ describe('analyzer credentials and client setup', () => {
   it('hasLlmCredentials reflects ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY', () => {
     delete process.env.ANTHROPIC_AUTH_TOKEN;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.PI_LLM_API;
+    delete process.env.ANTHROPIC_MODEL;
     assert.equal(hasLlmCredentials(), false);
 
     process.env.ANTHROPIC_AUTH_TOKEN = 'token-placeholder';
@@ -56,6 +61,29 @@ describe('analyzer credentials and client setup', () => {
     delete process.env.ANTHROPIC_AUTH_TOKEN;
     process.env.ANTHROPIC_API_KEY = 'key-placeholder';
     assert.equal(hasLlmCredentials(), true);
+  });
+
+  it('hasLlmCredentials accepts OPENAI_API_KEY for pi-agent in OpenAI mode only', () => {
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.PI_LLM_API;
+    delete process.env.ANTHROPIC_MODEL;
+    process.env.OPENAI_API_KEY = 'openai-placeholder';
+
+    // Without OpenAI mode indicator, pi-agent does not claim OpenAI credentials
+    assert.equal(hasLlmCredentials('pi-agent'), false);
+    assert.equal(hasLlmCredentials('direct-api'), false);
+
+    process.env.PI_LLM_API = 'openai-completions';
+    assert.equal(hasLlmCredentials(), false);
+    assert.equal(hasLlmCredentials('direct-api'), false);
+    assert.equal(hasLlmCredentials('agent-sdk'), false);
+    assert.equal(hasLlmCredentials('pi-agent'), true);
+
+    delete process.env.PI_LLM_API;
+    process.env.ANTHROPIC_MODEL = 'gpt-5.4';
+    assert.equal(hasLlmCredentials('direct-api'), false);
+    assert.equal(hasLlmCredentials('pi-agent'), true);
   });
 
   it('createAnthropicClient uses bearer auth with apiKey: null when ANTHROPIC_AUTH_TOKEN is set', () => {

@@ -237,6 +237,7 @@ export function parseTranscript(transcript: string): ParsedTranscript {
 
     let m: RegExpMatchArray | null;
     if ((m = line.match(vttCueRe))) {
+      pushCurrent();
       setFormat('vtt');
       const sec = parseTimestampToSec(m[1]);
       if (sec !== null) {

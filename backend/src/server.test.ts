@@ -216,6 +216,52 @@ describe('analyze input validation', () => {
       else process.env.ANTHROPIC_AUTH_TOKEN = prevToken;
     }
   });
+
+  it('recognizes OpenAI-only credentials for pi-agent while rejecting direct-api with 500', async () => {
+    const prevAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+    const prevApiKey = process.env.ANTHROPIC_API_KEY;
+    const prevOpenAiKey = process.env.OPENAI_API_KEY;
+    const prevPiApi = process.env.PI_LLM_API;
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.OPENAI_API_KEY = 'openai-test-key';
+    process.env.PI_LLM_API = 'openai-completions';
+
+    try {
+      const app = createApp({
+        requireApprovedUser: (req, _res, next) => {
+          req.user = { uid: 'test-uid', email: 'user@example.com' };
+          next();
+        }
+      });
+      const baseUrl = await startTestServer(app);
+
+      const directForm = new FormData();
+      directForm.append('method', 'direct-api');
+      const rDirect = await fetch(`${baseUrl}/api/analyze`, { method: 'POST', body: directForm });
+      assert.equal(rDirect.status, 500);
+
+      // pi-agent passes credential preflight and proceeds to file validation (400 missing file)
+      const piForm = new FormData();
+      piForm.append('method', 'pi-agent');
+      const rPi = await fetch(`${baseUrl}/api/analyze`, { method: 'POST', body: piForm });
+      assert.equal(rPi.status, 400);
+
+      const piStreamForm = new FormData();
+      piStreamForm.append('method', 'pi-agent');
+      const rPiStream = await fetch(`${baseUrl}/api/analyze/stream`, { method: 'POST', body: piStreamForm });
+      assert.equal(rPiStream.status, 400);
+    } finally {
+      if (prevAuthToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN;
+      else process.env.ANTHROPIC_AUTH_TOKEN = prevAuthToken;
+      if (prevApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prevApiKey;
+      if (prevOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = prevOpenAiKey;
+      if (prevPiApi === undefined) delete process.env.PI_LLM_API;
+      else process.env.PI_LLM_API = prevPiApi;
+    }
+  });
 });
 
 describe('security headers, auth enforcement, and static SPA serving', () => {

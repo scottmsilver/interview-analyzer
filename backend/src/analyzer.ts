@@ -10,10 +10,24 @@ import { analyzeInterviewPi } from './pi-analyzer.js';
 let anthropic: Anthropic | null = null;
 
 /**
- * Check whether any supported LLM credential is configured.
+ * Check whether any supported LLM credential is configured for the given analysis method.
  */
-export function hasLlmCredentials(): boolean {
-  return Boolean(process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY);
+export function hasLlmCredentials(method?: AnalysisMethod): boolean {
+  if (process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY) {
+    return true;
+  }
+
+  if (method === 'pi-agent' && process.env.OPENAI_API_KEY) {
+    const piApi = (process.env.PI_LLM_API || '').trim().toLowerCase();
+    const envModel = (process.env.ANTHROPIC_MODEL || '').trim().toLowerCase();
+    return (
+      piApi === 'openai-completions' ||
+      piApi === 'openai' ||
+      /^(?:gpt-|o1(?:$|[-_.])|o3(?:$|[-_.])|o4(?:$|[-_.]))/.test(envModel)
+    );
+  }
+
+  return false;
 }
 
 /**
