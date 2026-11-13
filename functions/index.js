@@ -221,8 +221,11 @@ exports.gmailOAuthCallback = onRequest(async (req, res) => {
     // Exchange code for tokens
     const {tokens} = await oauth2Client.getToken(code);
 
+    const adminUser = await admin.auth().getUser(adminUid);
+
     // Store tokens in Firestore
     await admin.firestore().collection("admins").doc(adminUid).set({
+      ...(adminUser.email ? {email: adminUser.email} : {}),
       gmailTokens: tokens,
       gmailAuthorizedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, {merge: true});

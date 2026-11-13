@@ -35,22 +35,22 @@ export interface BakeoffFixture {
 
 export const DEFAULT_ARMS: BakeoffArm[] = [
   {
-    id: 'direct-api-opus-5',
-    label: 'direct-api (claude-opus-5)',
+    id: 'direct-api-opus-5-5',
+    label: 'direct-api (claude-opus-5-5)',
     method: 'direct-api',
-    model: 'claude-opus-5',
+    model: 'claude-opus-5-5',
   },
   {
-    id: 'agent-sdk-opus-5',
-    label: 'agent-sdk (claude-opus-5)',
+    id: 'agent-sdk-opus-5-5',
+    label: 'agent-sdk (claude-opus-5-5)',
     method: 'agent-sdk',
-    model: 'claude-opus-5',
+    model: 'claude-opus-5-5',
   },
   {
-    id: 'pi-agent-opus-5',
-    label: 'pi-agent (claude-opus-5)',
+    id: 'pi-agent-opus-5-5',
+    label: 'pi-agent (claude-opus-5-5)',
     method: 'pi-agent',
-    model: 'claude-opus-5',
+    model: 'claude-opus-5-5',
     apiMode: 'anthropic-messages',
   },
   {

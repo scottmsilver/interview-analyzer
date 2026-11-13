@@ -10,6 +10,7 @@ import { analyzeInterviewPi, type PiRunTelemetry } from './pi-analyzer.js';
 import {
   createPiModel,
   createPiStreamFn,
+  effortFor,
   normalizePiBaseUrl,
   resolvePiApiMode,
 } from './pi-llm.js';
@@ -191,6 +192,97 @@ describe('pi-llm: Manifest URL normalization, mode resolution, and auth', () => 
     assert.equal(finalMsg.stopReason, 'stop');
     assert.equal(capturedHeaders.authorization, 'Bearer test-manifest-token');
     assert.equal(capturedHeaders['x-manifest-auth-type'], 'subscription');
+  });
+
+  it('respects thinkingLevelMap for claude-opus-5-5 and claude-fable-5-1 and falls back to xhigh when effort maps to null', async () => {
+    const opus55 = createPiModel('https://router.example.com', 'claude-opus-5-5', 'anthropic-messages');
+    assert.equal(opus55.api, 'anthropic-messages');
+    assert.equal(effortFor(opus55 as any, 'low'), 'low');
+    assert.equal(effortFor(opus55 as any, 'medium'), 'medium');
+    assert.equal(effortFor(opus55 as any, 'high'), 'high');
+    assert.equal(effortFor(opus55 as any, 'xhigh'), 'xhigh');
+
+    const fable51 = createPiModel('https://router.example.com', 'claude-fable-5-1', 'anthropic-messages');
+    assert.equal(fable51.api, 'anthropic-messages');
+    assert.equal(effortFor(fable51 as any, 'xhigh'), 'xhigh');
+    assert.equal(effortFor(fable51 as any, 'max'), 'max');
+
+    // When a model's thinkingLevelMap disables low/medium/high via null, effortFor falls back to xhigh
+    const restrictedFable = {
+      ...fable51,
+      thinkingLevelMap: { off: null, low: null, medium: null, high: null, xhigh: 'xhigh' as const, max: 'max' as const },
+    };
+    assert.equal(effortFor(restrictedFable as any, 'low'), 'xhigh');
+    assert.equal(effortFor(restrictedFable as any, 'medium'), 'xhigh');
+    assert.equal(effortFor(restrictedFable as any, 'high'), 'xhigh');
+
+    let capturedBody: Record<string, any> = {};
+    const srv = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => {
+        capturedBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.write(
+          `event: message_start\ndata: ${JSON.stringify({
+            type: 'message_start',
+            message: {
+              id: 'msg_fable',
+              type: 'message',
+              role: 'assistant',
+              model: 'claude-fable-5-1',
+              content: [],
+              stop_reason: null,
+              usage: { input_tokens: 10, output_tokens: 1 },
+            },
+          })}\n\n`,
+        );
+        res.write(
+          `event: content_block_start\ndata: ${JSON.stringify({
+            type: 'content_block_start',
+            index: 0,
+            content_block: { type: 'text', text: '' },
+          })}\n\n`,
+        );
+        res.write(
+          `event: content_block_delta\ndata: ${JSON.stringify({
+            type: 'content_block_delta',
+            index: 0,
+            delta: { type: 'text_delta', text: 'OK' },
+          })}\n\n`,
+        );
+        res.write(
+          `event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`,
+        );
+        res.write(
+          `event: message_delta\ndata: ${JSON.stringify({
+            type: 'message_delta',
+            delta: { stop_reason: 'end_turn', stop_sequence: null },
+            usage: { output_tokens: 2 },
+          })}\n\n`,
+        );
+        res.write(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
+        res.end();
+      });
+    });
+    activeServers.push(srv);
+    await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
+    const port = (srv.address() as { port: number }).port;
+
+    process.env.ANTHROPIC_AUTH_TOKEN = 'test-manifest-token';
+    process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${port}`;
+    const wiredModel = {
+      ...createPiModel(`http://127.0.0.1:${port}`, 'claude-fable-5-1', 'anthropic-messages'),
+      thinkingLevelMap: { off: null, low: null, medium: null, high: null, xhigh: 'xhigh' as const, max: 'max' as const },
+    };
+    const streamFn = createPiStreamFn({ apiMode: 'anthropic-messages', effort: 'high' });
+    const stream = await streamFn(wiredModel as any, {
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], timestamp: Date.now() }],
+    } as Parameters<StreamFn>[1]);
+    const finalMsg = await stream.result();
+    assert.equal(finalMsg.stopReason, 'stop');
+    assert.equal(capturedBody.output_config?.effort, 'xhigh');
   });
 });
 

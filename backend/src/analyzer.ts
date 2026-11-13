@@ -55,7 +55,7 @@ export function isValidAnalysisMethod(value: unknown): value is AnalysisMethod {
   return typeof value === 'string' && VALID_ANALYSIS_METHODS.has(value as AnalysisMethod);
 }
 
-export const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-5';
+export const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-5-5';
 
 export const MANIFEST_ERROR_PREFIX = '[🦚 Manifest';
 
@@ -101,12 +101,15 @@ export function isThinkingUnsupportedError(error: unknown): boolean {
  */
 export const ALLOWED_ANTHROPIC_MODELS: ReadonlySet<string> = new Set([
   'auto',
-  'claude-opus-5',
   'claude-opus-5-5',
-  'claude-sonnet-5',
   'claude-sonnet-5-5',
-  'claude-haiku-4-5',
-  'claude-haiku-5-5'
+  'claude-haiku-5-5',
+  'claude-fable-5-1',
+  'claude-fable-5',
+  'claude-fable-5-2',
+  'claude-opus-5',
+  'claude-sonnet-5',
+  'claude-haiku-4-5'
 ]);
 
 /**
@@ -227,7 +230,7 @@ export interface AnalysisOptions {
   interviewType: string;  // Can be built-in types or custom admin-defined types
   cachedCriteria?: string;  // Pre-fetched interview criteria (from admin or web search)
   method?: AnalysisMethod;  // Which analysis method to use (default: agent-sdk)
-  model?: string;          // Optional model override (default: ANTHROPIC_MODEL env or claude-opus-5)
+  model?: string;          // Optional model override (default: ANTHROPIC_MODEL env or claude-opus-5-5)
 }
 
 // Web search tool definition for Direct API method

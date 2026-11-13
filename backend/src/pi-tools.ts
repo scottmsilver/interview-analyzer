@@ -393,7 +393,7 @@ export function parseTranscript(transcript: string): ParsedTranscript {
 
   pushCurrent();
 
-  // If speakers are named (e.g. "Alice" / "Bob") without "Interviewer"/"Candidate", assign heuristic roles
+  // Assign heuristic roles when neither role or only one role is explicitly labeled
   const hasExplicitInterviewer = turns.some((t) => t.role === 'interviewer');
   const hasExplicitCandidate = turns.some((t) => t.role === 'candidate');
   if (!hasExplicitInterviewer && !hasExplicitCandidate && turns.length > 0) {
@@ -402,6 +402,18 @@ export function parseTranscript(transcript: string): ParsedTranscript {
       const firstSpeaker = turns[0].speaker;
       for (const turn of turns) {
         turn.role = turn.speaker === firstSpeaker ? 'interviewer' : 'candidate';
+      }
+    }
+  } else if (hasExplicitInterviewer !== hasExplicitCandidate) {
+    const otherSpeakers = Array.from(
+      new Set(turns.filter((t) => t.role === 'other').map((t) => t.speaker)),
+    );
+    if (otherSpeakers.length === 1) {
+      const inferredRole: SpeakerRole = hasExplicitInterviewer ? 'candidate' : 'interviewer';
+      for (const turn of turns) {
+        if (turn.role === 'other') {
+          turn.role = inferredRole;
+        }
       }
     }
   }

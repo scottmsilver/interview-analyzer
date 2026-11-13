@@ -210,7 +210,7 @@ Use markdown formatting.`;
 // Method 2: Direct Claude API with adaptive thinking (using streaming for long operations)
 //
 // Thinking depth is controlled by `output_config.effort`, not a token budget.
-// `thinking.budget_tokens` was removed on Opus 5 and returns a 400.
+// `thinking.budget_tokens` was removed on Opus 5+ and returns a 400.
 async function runDirectAPI(transcript: string, interviewType: string, effort: ThinkingEffort = 'high'): Promise<ComparisonResult> {
   console.log(`\n🧠 Running Direct API at effort=${effort}...`);
   const startTime = Date.now();
@@ -267,7 +267,7 @@ async function runDirectAPI(transcript: string, interviewType: string, effort: T
 
 // Method 3: Direct Claude API at the cheapest thinking setting (baseline)
 //
-// This was a thinking-disabled baseline. On Opus 5 thinking is on by default and
+// This was a thinking-disabled baseline. On Opus 5+ thinking is on by default and
 // explicitly disabling it can leak internal XML tags into the visible answer,
 // which would corrupt the text this harness compares. Low effort is the
 // recommended cheap/fast arm instead.
@@ -347,7 +347,7 @@ Use markdown formatting.`;
   while (true) {
     const response = await anthropic.messages.create({
       model: MODEL,
-      // Thinking is on by default on Opus 5 and shares this cap with the text.
+      // Thinking is on by default on Opus 5+ and shares this cap with the text.
       max_tokens: 16000,
       tools: [webSearchTool],
       messages

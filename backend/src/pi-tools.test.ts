@@ -118,6 +118,23 @@ describe('pi-tools: transcript parsing, metrics, Q&A segmentation, quality audit
     const plain = parseTranscript('Interviewer: Hello.\nCandidate: World.');
     assert.equal(plain.hasTimestamps, false);
     assert.equal(plain.timestampFormat, 'none');
+
+    const mixedInterviewer = parseTranscript(
+      'Interviewer: Walk me through how you would prioritize onboarding fixes.\nJordan: First I would segment new signups by activation drop-off and measure completion rate.',
+    );
+    assert.equal(mixedInterviewer.turns[0].role, 'interviewer');
+    assert.equal(mixedInterviewer.turns[1].role, 'candidate');
+    const mixedMetrics = computeTranscriptMetrics(
+      'Interviewer: Walk me through how you would prioritize onboarding fixes.\nJordan: First I would segment new signups by activation drop-off and measure completion rate.',
+    );
+    assert.ok(mixedMetrics.candidateWords > 0);
+    assert.ok(mixedMetrics.candidateTalkRatioPct > 50);
+
+    const mixedCandidate = parseTranscript(
+      'Alex: Tell me about a tough trade-off.\nCandidate: I chose reliability over scope.',
+    );
+    assert.equal(mixedCandidate.turns[0].role, 'interviewer');
+    assert.equal(mixedCandidate.turns[1].role, 'candidate');
   });
 
   it('computes ground-truth metrics and Q&A audits on realistic Google APM fixture', () => {

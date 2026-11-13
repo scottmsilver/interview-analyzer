@@ -87,6 +87,23 @@ export function createPiModel(
   };
 }
 
+export function effortFor(
+  model: Pick<Model<'anthropic-messages'>, 'thinkingLevelMap'>,
+  chosenEffort: AnthropicEffort = 'high',
+): AnthropicEffort {
+  const map = model.thinkingLevelMap;
+  const mapped = map?.[chosenEffort];
+  if (mapped === null) {
+    if (typeof map?.xhigh === 'string') return map.xhigh as AnthropicEffort;
+    if (typeof map?.max === 'string') return map.max as AnthropicEffort;
+    return 'xhigh';
+  }
+  if (typeof mapped === 'string') {
+    return mapped as AnthropicEffort;
+  }
+  return chosenEffort;
+}
+
 export interface CreatePiStreamFnOptions {
   apiMode?: PiApiMode;
   maxOutputTokens?: number;
@@ -143,6 +160,7 @@ export function createPiStreamFn(optionsOrMode: CreatePiStreamFnOptions | PiApiM
     };
 
     const thinkingEnabled = defaultThinkingEnabled;
+    const resolvedEffort = effortFor(model as Model<'anthropic-messages'>, effort);
 
     return streamAnthropic(model as Model<'anthropic-messages'>, context, {
       ...streamOptions,
@@ -153,7 +171,7 @@ export function createPiStreamFn(optionsOrMode: CreatePiStreamFnOptions | PiApiM
       thinkingEnabled,
       ...(thinkingEnabled
         ? {
-            effort,
+            effort: resolvedEffort,
             thinkingDisplay: 'summarized' as const,
           }
         : {}),

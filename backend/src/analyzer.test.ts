@@ -108,11 +108,11 @@ describe('buildAgentEnv', () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
     process.env.ANTHROPIC_BASE_URL = 'https://api.example.com';
 
-    const env = buildAgentEnv('claude-opus-5');
+    const env = buildAgentEnv('claude-opus-5-5');
     assert.equal(env.ANTHROPIC_API_KEY, 'sk-ant-key');
     assert.equal(env.ANTHROPIC_AUTH_TOKEN, undefined);
     assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.example.com');
-    assert.equal(env.ANTHROPIC_MODEL, 'claude-opus-5');
+    assert.equal(env.ANTHROPIC_MODEL, 'claude-opus-5-5');
   });
 });
 
@@ -123,21 +123,24 @@ describe('getAnthropicModel', () => {
     assert.equal(getAnthropicModel(), 'auto');
   });
 
-  it('defaults to claude-opus-5 when neither ANTHROPIC_MODEL nor ANTHROPIC_AUTH_TOKEN is set', () => {
+  it('defaults to claude-opus-5-5 when neither ANTHROPIC_MODEL nor ANTHROPIC_AUTH_TOKEN is set', () => {
     delete process.env.ANTHROPIC_MODEL;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
-    assert.equal(getAnthropicModel(), 'claude-opus-5');
+    assert.equal(getAnthropicModel(), 'claude-opus-5-5');
   });
 
   it('accepts all expanded ALLOWED_ANTHROPIC_MODELS and rejects unknown overrides', () => {
     const expected = [
       'auto',
-      'claude-opus-5',
       'claude-opus-5-5',
-      'claude-sonnet-5',
       'claude-sonnet-5-5',
-      'claude-haiku-4-5',
-      'claude-haiku-5-5'
+      'claude-haiku-5-5',
+      'claude-fable-5-1',
+      'claude-fable-5',
+      'claude-fable-5-2',
+      'claude-opus-5',
+      'claude-sonnet-5',
+      'claude-haiku-4-5'
     ];
     for (const model of expected) {
       assert.equal(ALLOWED_ANTHROPIC_MODELS.has(model), true);
@@ -146,7 +149,7 @@ describe('getAnthropicModel', () => {
 
     delete process.env.ANTHROPIC_MODEL;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
-    assert.equal(getAnthropicModel('unsupported-expensive-model'), 'claude-opus-5');
+    assert.equal(getAnthropicModel('unsupported-expensive-model'), 'claude-opus-5-5');
   });
 });
 
