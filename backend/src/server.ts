@@ -17,8 +17,11 @@ import {
   AnalysisMethod,
   AnalysisOptions,
   getAnthropicModel,
-  hasLlmCredentials
+  hasLlmCredentials,
+  isValidAnalysisMethod,
+  VALID_ANALYSIS_METHODS
 } from './analyzer.js';
+import { analyzeInterviewPi } from './pi-analyzer.js';
 import {
   AuthenticatedUser,
   optionalVerifiedUser as defaultOptionalVerifiedUser,
@@ -311,9 +314,21 @@ export function createApp(deps: ServerDeps = {}) {
           }
         }
 
-        // Get analysis method (default to direct-api for speed)
-        const method = (req.body.method as AnalysisMethod) || 'direct-api';
-        const methodLabel = method === 'agent-sdk' ? 'Agent SDK (thorough)' : 'Direct API (fast)';
+        // Get and validate analysis method (default to direct-api for speed)
+        const rawMethod = req.body.method as unknown;
+        if (rawMethod !== undefined && rawMethod !== '' && !isValidAnalysisMethod(rawMethod)) {
+          return res.status(400).json({
+            error: `Invalid method. Allowed: ${[...VALID_ANALYSIS_METHODS].join(', ')}`
+          });
+        }
+        const method: AnalysisMethod =
+          rawMethod && isValidAnalysisMethod(rawMethod) ? rawMethod : 'direct-api';
+        const methodLabel =
+          method === 'agent-sdk'
+            ? 'Agent SDK (thorough)'
+            : method === 'pi-agent'
+              ? 'Pi Agent (tools + rubrics)'
+              : 'Direct API (fast)';
 
         // Set up Server-Sent Events (SSE) for streaming
         res.setHeader('Content-Type', 'text/event-stream');
@@ -353,9 +368,12 @@ export function createApp(deps: ServerDeps = {}) {
 
         try {
           // Run analysis with selected method
-          const generator = method === 'agent-sdk'
-            ? await analyzeInterview(transcript, { interviewType, cachedCriteria, model })
-            : await analyzeInterviewDirectAPI(transcript, { interviewType, cachedCriteria, model });
+          const generator =
+            method === 'agent-sdk'
+              ? await analyzeInterview(transcript, { interviewType, cachedCriteria, model })
+              : method === 'pi-agent'
+                ? await analyzeInterviewPi(transcript, { interviewType, cachedCriteria, model })
+                : await analyzeInterviewDirectAPI(transcript, { interviewType, cachedCriteria, model });
 
           for await (const message of generator) {
             if (res.destroyed || res.writableEnded) break;
@@ -465,10 +483,23 @@ export function createApp(deps: ServerDeps = {}) {
           }
         }
 
+        const rawMethod = req.body.method as unknown;
+        if (rawMethod !== undefined && rawMethod !== '' && !isValidAnalysisMethod(rawMethod)) {
+          return res.status(400).json({
+            error: `Invalid method. Allowed: ${[...VALID_ANALYSIS_METHODS].join(', ')}`
+          });
+        }
+        const method = rawMethod && isValidAnalysisMethod(rawMethod) ? rawMethod : undefined;
+
         const model = (req.body.model as string) || undefined;
 
         // Run analysis with optional cached criteria
-        const analysis = await analyzeInterviewSync(transcript, { interviewType, cachedCriteria, model });
+        const analysis = await analyzeInterviewSync(transcript, {
+          interviewType,
+          cachedCriteria,
+          model,
+          ...(method ? { method } : {})
+        });
 
         res.json({
           success: true,

@@ -18,11 +18,21 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import * as fs from 'fs';
 import * as path from 'path';
 import dotenv from 'dotenv';
+import {
+  AGENT_ALLOWED_TOOLS,
+  AGENT_DISALLOWED_TOOLS,
+  buildAgentEnv,
+  collectAnalysisSync,
+  createAnthropicClient,
+  detectManifestError,
+  getAnthropicModel
+} from './analyzer.js';
+import { analyzeInterviewPi, type PiRunTelemetry } from './pi-analyzer.js';
 
 dotenv.config();
 
-const anthropic = new Anthropic();
-const MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-5';
+const anthropic = createAnthropicClient();
+const MODEL = getAnthropicModel();
 
 // Effort replaces the old thinking-token budget as the depth dial.
 type ThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -160,15 +170,26 @@ Use markdown formatting.`;
   const result = query({
     prompt,
     options: {
+      model: MODEL,
       settingSources: [],
       maxTurns: 10,
-      permissionMode: 'bypassPermissions',
+      tools: AGENT_ALLOWED_TOOLS,
+      allowedTools: AGENT_ALLOWED_TOOLS,
+      disallowedTools: AGENT_DISALLOWED_TOOLS,
+      mcpServers: {},
+      strictMcpConfig: true,
+      permissionMode: 'dontAsk',
+      env: buildAgentEnv(MODEL),
     }
   });
 
   let finalResult = '';
   for await (const message of result) {
     if (message.type === 'result' && message.subtype === 'success' && message.result) {
+      const manifestErr = detectManifestError(message.result);
+      if (manifestErr) {
+        throw new Error(manifestErr);
+      }
       finalResult = message.result;
       break;
     }
@@ -404,6 +425,41 @@ Use markdown formatting.`;
   };
 }
 
+// Method 5: Pi Agent (7-tool interview evaluation suite)
+async function runPiAgentMethod(transcript: string, interviewType: string): Promise<ComparisonResult> {
+  console.log('\n🧪 Running Pi Agent method...');
+  const startTime = Date.now();
+  let telemetry: PiRunTelemetry | null = null;
+
+  const gen = await analyzeInterviewPi(transcript, {
+    interviewType,
+    model: MODEL,
+    allowUnlistedModel: true
+  });
+
+  const wrapped = (async function* () {
+    for await (const msg of gen) {
+      if (msg.type === 'raw' && msg.raw?.type === 'pi_telemetry') {
+        telemetry = msg.raw as PiRunTelemetry;
+      }
+      yield msg;
+    }
+  })();
+
+  const finalResult = await collectAnalysisSync(wrapped);
+  const duration = Date.now() - startTime;
+  const t = telemetry as PiRunTelemetry | null;
+
+  return {
+    method: `Pi Agent (${MODEL})`,
+    duration,
+    inputTokens: t?.usage.inputTokens ?? 0,
+    outputTokens: t?.usage.outputTokens ?? 0,
+    resultLength: finalResult.length,
+    result: finalResult
+  };
+}
+
 // Main comparison function
 async function compare(transcriptPath: string, interviewType: string = 'google-apm') {
   // Read transcript
@@ -451,6 +507,13 @@ async function compare(transcriptPath: string, interviewType: string = 'google-a
     results.push(await runAgentSDK(transcript, interviewType));
   } catch (e) {
     console.error('Agent SDK failed:', e);
+  }
+
+  try {
+    // 6. Pi Agent (with 7-tool interview suite)
+    results.push(await runPiAgentMethod(transcript, interviewType));
+  } catch (e) {
+    console.error('Pi Agent failed:', e);
   }
 
   // Print comparison
