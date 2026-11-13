@@ -43,26 +43,36 @@ dotenv.config();
 const MAX_CACHED_CRITERIA_BYTES = 50 * 1024;
 const SHARE_ID_REGEX = /^[A-Za-z0-9_-]{8,64}$/;
 
+const TRUSTED_PROXY_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
 /**
- * Extract client IP address, honoring reverse-proxy headers (Cloudflare / X-Forwarded-For).
+ * Extract client IP address, honoring reverse-proxy headers (Cloudflare / X-Forwarded-For)
+ * only when the immediate peer is a trusted loopback proxy or TRUST_PROXY === 'true'.
  */
 export function getClientIp(req: Pick<Request, 'headers' | 'ip' | 'socket'>): string {
-  const cfConnectingIp = req.headers['cf-connecting-ip'];
-  if (typeof cfConnectingIp === 'string' && cfConnectingIp.trim()) {
-    return cfConnectingIp.trim();
-  }
-  if (Array.isArray(cfConnectingIp) && cfConnectingIp[0]?.trim()) {
-    return cfConnectingIp[0].trim();
+  const remoteAddress = req.socket?.remoteAddress;
+  const isTrustedProxy =
+    process.env.TRUST_PROXY === 'true' ||
+    (typeof remoteAddress === 'string' && TRUSTED_PROXY_IPS.has(remoteAddress));
+
+  if (isTrustedProxy) {
+    const cfConnectingIp = req.headers['cf-connecting-ip'];
+    if (typeof cfConnectingIp === 'string' && cfConnectingIp.trim()) {
+      return cfConnectingIp.trim();
+    }
+    if (Array.isArray(cfConnectingIp) && cfConnectingIp[0]?.trim()) {
+      return cfConnectingIp[0].trim();
+    }
+
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const forwardedStr = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+    if (typeof forwardedStr === 'string' && forwardedStr.trim()) {
+      const firstHop = forwardedStr.split(',')[0]?.trim();
+      if (firstHop) return firstHop;
+    }
   }
 
-  const forwardedFor = req.headers['x-forwarded-for'];
-  const forwardedStr = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
-  if (typeof forwardedStr === 'string' && forwardedStr.trim()) {
-    const firstHop = forwardedStr.split(',')[0]?.trim();
-    if (firstHop) return firstHop;
-  }
-
-  return req.ip || req.socket?.remoteAddress || 'unknown';
+  return remoteAddress || req.ip || 'unknown';
 }
 
 /**

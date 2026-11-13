@@ -253,114 +253,124 @@ export async function analyzeInterviewPi(
     },
   });
 
-  // Start background execution that feeds `queue` live
-  void (async () => {
-    const startTime = Date.now();
-    let thinkingBuffer = '';
-    let textBuffer = '';
-    let lastTextYield = Date.now();
-    let pendingManifestError: string | null = null;
+  let agentRunning = false;
+  let agentSettled = false;
+  let consumerClosed = false;
 
-    queue.push({
-      type: 'start',
-      content: 'Starting Pi Agent analysis...',
-      timestamp: new Date(),
-    });
+  const startTime = Date.now();
+  let thinkingBuffer = '';
+  let textBuffer = '';
+  let lastTextYield = Date.now();
+  let pendingManifestError: string | null = null;
 
-    const flushThinking = (force: boolean) => {
-      if (!thinkingBuffer) return;
-      const { emit, rest } = takeSentences(thinkingBuffer, force);
-      thinkingBuffer = rest;
-      const clean = emit.replace(/\s+/g, ' ').trim();
-      if (clean.length > 0) {
-        queue.push({
-          type: 'raw',
-          content: `Thinking: ${clean}`,
-          timestamp: new Date(),
-          raw: { type: 'thinking_delta', snippet: clean },
-        });
-      }
-    };
+  const flushThinking = (force: boolean) => {
+    if (!thinkingBuffer || consumerClosed) return;
+    const { emit, rest } = takeSentences(thinkingBuffer, force);
+    thinkingBuffer = rest;
+    const clean = emit.replace(/\s+/g, ' ').trim();
+    if (clean.length > 0) {
+      queue.push({
+        type: 'raw',
+        content: `Thinking: ${clean}`,
+        timestamp: new Date(),
+        raw: { type: 'thinking_delta', snippet: clean },
+      });
+    }
+  };
 
-    const unsubscribe = agent.subscribe((event: AgentEvent) => {
-      if (event.type === 'message_update') {
-        const ame = event.assistantMessageEvent;
-        if (ame.type === 'thinking_delta' && ame.delta) {
-          thinkingBuffer += ame.delta;
-          flushThinking(false);
-        } else if (ame.type === 'thinking_end') {
-          flushThinking(true);
-        } else if (ame.type === 'text_delta' && ame.delta) {
-          textBuffer += ame.delta;
-          const now = Date.now();
-          if (now - lastTextYield > 3000 || textBuffer.length > 150) {
-            const cleanLen = textBuffer.replace(/\s+/g, ' ').trim().length;
-            if (cleanLen > 0) {
-              queue.push({
-                type: 'raw',
-                content: `Writing evaluation (${cleanLen} characters so far)`,
-                timestamp: new Date(),
-                raw: { type: 'text_progress', length: textBuffer.length },
-              });
-            }
-            lastTextYield = now;
-          }
-        }
-      } else if (event.type === 'message_end') {
+  const unsubscribe = agent.subscribe((event: AgentEvent) => {
+    if (consumerClosed) return;
+    if (event.type === 'message_update') {
+      const ame = event.assistantMessageEvent;
+      if (ame.type === 'thinking_delta' && ame.delta) {
+        thinkingBuffer += ame.delta;
+        flushThinking(false);
+      } else if (ame.type === 'thinking_end') {
         flushThinking(true);
-        textBuffer = '';
-        const msg = event.message;
-        if (msg.role === 'assistant') {
-          const text = extractTextFromAssistantMessage(msg);
-          if (text) {
-            const manifestErr = detectManifestError(text);
-            if (manifestErr) {
-              pendingManifestError = manifestErr;
-            } else if (msg.stopReason === 'toolUse') {
-              // Intermediate assistant narration before tool calls must NEVER enter `type: 'result'`
-              queue.push({
-                type: 'raw',
-                content: text.slice(0, 500),
-                timestamp: new Date(),
-                raw: { type: 'intermediate_text', full: text },
-              });
-            }
+      } else if (ame.type === 'text_delta' && ame.delta) {
+        textBuffer += ame.delta;
+        const now = Date.now();
+        if (now - lastTextYield > 3000 || textBuffer.length > 150) {
+          const cleanLen = textBuffer.replace(/\s+/g, ' ').trim().length;
+          if (cleanLen > 0) {
+            queue.push({
+              type: 'raw',
+              content: `Writing evaluation (${cleanLen} characters so far)`,
+              timestamp: new Date(),
+              raw: { type: 'text_progress', length: textBuffer.length },
+            });
+          }
+          lastTextYield = now;
+        }
+      }
+    } else if (event.type === 'message_end') {
+      flushThinking(true);
+      textBuffer = '';
+      const msg = event.message;
+      if (msg.role === 'assistant') {
+        const text = extractTextFromAssistantMessage(msg);
+        if (text) {
+          const manifestErr = detectManifestError(text);
+          if (manifestErr) {
+            pendingManifestError = manifestErr;
+          } else if (msg.stopReason === 'toolUse') {
+            // Intermediate assistant narration before tool calls must NEVER enter `type: 'result'`
+            queue.push({
+              type: 'raw',
+              content: text.slice(0, 500),
+              timestamp: new Date(),
+              raw: { type: 'intermediate_text', full: text },
+            });
           }
         }
-      } else if (event.type === 'tool_execution_start') {
-        queue.push({
-          type: 'raw',
-          content: `Using tool: ${event.toolName}`,
-          timestamp: new Date(),
-          raw: { type: 'tool_use', tool: event.toolName, input: event.args },
-        });
-      } else if (event.type === 'tool_execution_end') {
-        const durationMs = typeof event.durationMs === 'number' ? Math.round(event.durationMs) : 0;
-        toolCallMetrics.push({
-          name: event.toolName,
+      }
+    } else if (event.type === 'tool_execution_start') {
+      queue.push({
+        type: 'raw',
+        content: `Using tool: ${event.toolName}`,
+        timestamp: new Date(),
+        raw: { type: 'tool_use', tool: event.toolName, input: event.args },
+      });
+    } else if (event.type === 'tool_execution_end') {
+      const durationMs = typeof event.durationMs === 'number' ? Math.round(event.durationMs) : 0;
+      toolCallMetrics.push({
+        name: event.toolName,
+        durationMs,
+        isError: event.isError,
+      });
+      queue.push({
+        type: 'raw',
+        content: `Tool completed: ${event.toolName} (${durationMs}ms)`,
+        timestamp: new Date(),
+        raw: {
+          type: 'tool_result',
+          tool: event.toolName,
           durationMs,
           isError: event.isError,
-        });
-        queue.push({
-          type: 'raw',
-          content: `Tool completed: ${event.toolName} (${durationMs}ms)`,
-          timestamp: new Date(),
-          raw: {
-            type: 'tool_result',
-            tool: event.toolName,
-            durationMs,
-            isError: event.isError,
-          },
-        });
-      }
-    });
+        },
+      });
+    }
+  });
 
+  // Start background execution that feeds `queue` live
+  void (async () => {
     try {
+      queue.push({
+        type: 'start',
+        content: 'Starting Pi Agent analysis...',
+        timestamp: new Date(),
+      });
+
+      if (consumerClosed) return;
+
+      agentRunning = true;
       await agent.prompt({
         role: 'user',
         content: userPrompt,
         timestamp: Date.now(),
       });
+
+      if (consumerClosed) return;
 
       let assistantMessages = agent.state.messages.filter(
         (m): m is AssistantMessage => m.role === 'assistant',
@@ -389,6 +399,7 @@ export async function analyzeInterviewPi(
 
       // If maxTurns was hit while still requesting tools, force one final tool-free synthesis turn
       if (lastAssistant.stopReason === 'toolUse') {
+        if (consumerClosed) return;
         agent.state.tools = [];
         turnsCompleted = 0;
         await agent.prompt({
@@ -397,6 +408,7 @@ export async function analyzeInterviewPi(
             'Maximum tool turns reached. Output ONLY the final structured Markdown interview evaluation now based on your tool outputs.',
           timestamp: Date.now(),
         });
+        if (consumerClosed) return;
         assistantMessages = agent.state.messages.filter(
           (m): m is AssistantMessage => m.role === 'assistant',
         );
@@ -482,18 +494,45 @@ export async function analyzeInterviewPi(
         timestamp: new Date(),
       });
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Unknown error during Pi agent analysis';
-      queue.push({
-        type: 'error',
-        content: detectManifestError(msg) ?? msg,
-        timestamp: new Date(),
-        raw: { error: error instanceof Error ? error.stack : String(error) },
-      });
+      if (!consumerClosed) {
+        const msg = error instanceof Error ? error.message : 'Unknown error during Pi agent analysis';
+        queue.push({
+          type: 'error',
+          content: detectManifestError(msg) ?? msg,
+          timestamp: new Date(),
+          raw: { error: error instanceof Error ? error.stack : String(error) },
+        });
+      }
     } finally {
+      agentSettled = true;
       unsubscribe();
       queue.close();
     }
   })();
 
-  return queue.iterator();
+  const abortAgentIfNeeded = () => {
+    consumerClosed = true;
+    unsubscribe();
+    if (agentRunning && !agentSettled) {
+      agent.abort();
+    }
+    queue.close();
+  };
+
+  async function* consumeQueue(): AsyncGenerator<AnalysisMessage> {
+    try {
+      yield* queue.iterator();
+    } finally {
+      abortAgentIfNeeded();
+    }
+  }
+
+  const generator = consumeQueue();
+  const originalReturn = generator.return.bind(generator);
+  generator.return = ((value?: unknown) => {
+    abortAgentIfNeeded();
+    return originalReturn(value);
+  }) as typeof generator.return;
+
+  return generator;
 }

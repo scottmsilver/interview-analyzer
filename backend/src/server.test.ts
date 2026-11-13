@@ -44,38 +44,87 @@ describe('admin key and client IP helpers', () => {
     assert.equal(isValidAdminKey('secret-key-123', undefined), false);
   });
 
-  it('getClientIp prefers CF-Connecting-IP, then X-Forwarded-For first hop, then socket', () => {
-    assert.equal(
-      getClientIp({
-        headers: {
-          'cf-connecting-ip': '2001:db8::cafe',
-          'x-forwarded-for': '2001:db8::1, 2001:db8::2'
-        },
-        ip: '::1',
-        socket: {} as any
-      }),
-      '2001:db8::cafe'
-    );
+  it('getClientIp honors CF-Connecting-IP and X-Forwarded-For only from trusted loopback proxies or when TRUST_PROXY=true', () => {
+    const prevTrustProxy = process.env.TRUST_PROXY;
+    delete process.env.TRUST_PROXY;
+    try {
+      for (const loopback of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
+        assert.equal(
+          getClientIp({
+            headers: {
+              'cf-connecting-ip': '2001:db8::cafe',
+              'x-forwarded-for': '2001:db8::1, 2001:db8::2'
+            },
+            ip: loopback,
+            socket: { remoteAddress: loopback } as any
+          }),
+          '2001:db8::cafe'
+        );
 
-    assert.equal(
-      getClientIp({
-        headers: {
-          'x-forwarded-for': ' 2001:db8::1 , 2001:db8::2 '
-        },
-        ip: '::1',
-        socket: {} as any
-      }),
-      '2001:db8::1'
-    );
+        assert.equal(
+          getClientIp({
+            headers: {
+              'x-forwarded-for': ' 2001:db8::1 , 2001:db8::2 '
+            },
+            ip: loopback,
+            socket: { remoteAddress: loopback } as any
+          }),
+          '2001:db8::1'
+        );
 
-    assert.equal(
-      getClientIp({
-        headers: {},
-        ip: '::1',
-        socket: {} as any
-      }),
-      '::1'
-    );
+        assert.equal(
+          getClientIp({
+            headers: {},
+            ip: loopback,
+            socket: { remoteAddress: loopback } as any
+          }),
+          loopback
+        );
+      }
+
+      // Untrusted public remote IP must ignore spoofed forwarding headers
+      assert.equal(
+        getClientIp({
+          headers: {
+            'cf-connecting-ip': '2001:db8::cafe',
+            'x-forwarded-for': '2001:db8::1, 2001:db8::2'
+          },
+          ip: '198.51.100.42',
+          socket: { remoteAddress: '198.51.100.42' } as any
+        }),
+        '198.51.100.42'
+      );
+
+      // Missing remoteAddress is untrusted by default
+      assert.equal(
+        getClientIp({
+          headers: {
+            'cf-connecting-ip': '2001:db8::cafe',
+            'x-forwarded-for': '2001:db8::1'
+          },
+          ip: '::1',
+          socket: {} as any
+        }),
+        '::1'
+      );
+
+      // TRUST_PROXY=true trusts forwarding headers even from a non-loopback proxy IP
+      process.env.TRUST_PROXY = 'true';
+      assert.equal(
+        getClientIp({
+          headers: {
+            'cf-connecting-ip': '203.0.113.9',
+            'x-forwarded-for': '198.51.100.1'
+          },
+          ip: '10.0.0.5',
+          socket: { remoteAddress: '10.0.0.5' } as any
+        }),
+        '203.0.113.9'
+      );
+    } finally {
+      if (prevTrustProxy === undefined) delete process.env.TRUST_PROXY;
+      else process.env.TRUST_PROXY = prevTrustProxy;
+    }
   });
 });
 

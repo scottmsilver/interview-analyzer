@@ -318,6 +318,82 @@ describe('pi-analyzer: streaming events, tool calls, intermediate text exclusion
     );
     await assert.rejects(() => collectAnalysisSync(gen), /Manifest router error:/);
   });
+
+  it('aborts the underlying Pi agent and stops further turns when breaking out of the iterator early', async () => {
+    let callCount = 0;
+    const capturedSignals: Array<AbortSignal | undefined> = [];
+    let resolveAbortObserved!: () => void;
+    const abortObserved = new Promise<void>((resolve) => {
+      resolveAbortObserved = resolve;
+    });
+
+    const abortAwareStream: StreamFn = (model, _context, options) => {
+      callCount += 1;
+      const signal = options?.signal;
+      capturedSignals.push(signal);
+      const stream = new AssistantMessageEventStream();
+
+      queueMicrotask(() => {
+        const partial: AssistantMessage = {
+          role: 'assistant',
+          content: [],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: makeUsage(20, 5),
+          stopReason: 'stop',
+          timestamp: Date.now(),
+        };
+        stream.push({ type: 'start', partial });
+        partial.content.push({ type: 'thinking', thinking: '' });
+        stream.push({ type: 'thinking_start', contentIndex: 0, partial });
+        const thought = 'Inspecting transcript before proceeding.';
+        (partial.content[0] as any).thinking = thought;
+        stream.push({ type: 'thinking_delta', contentIndex: 0, delta: thought, partial });
+        stream.push({ type: 'thinking_end', contentIndex: 0, content: thought, partial });
+
+        const emitAborted = () => {
+          stream.push({
+            type: 'error',
+            reason: 'aborted',
+            error: {
+              ...partial,
+              stopReason: 'aborted',
+              errorMessage: 'Aborted',
+            },
+          });
+          resolveAbortObserved();
+        };
+
+        if (signal?.aborted) {
+          emitAborted();
+        } else {
+          signal?.addEventListener('abort', emitAborted, { once: true });
+        }
+      });
+
+      return stream;
+    };
+
+    const seenTypes: string[] = [];
+    for await (const msg of await analyzeInterviewPi(
+      'Interviewer: Hello?\nCandidate: Hi.',
+      { interviewType: 'generic', maxTurns: 5 },
+      abortAwareStream,
+    )) {
+      seenTypes.push(msg.type);
+      if (msg.type === 'raw' && msg.raw?.type === 'thinking_delta') {
+        break;
+      }
+    }
+
+    assert.equal(capturedSignals.length, 1);
+    assert.equal(capturedSignals[0]?.aborted, true);
+    await abortObserved;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(callCount, 1);
+    assert.deepEqual(seenTypes, ['start', 'raw']);
+  });
 });
 
 describe('bakeoff CLI guards', () => {
