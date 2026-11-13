@@ -5,8 +5,34 @@
 
 import { getDb, isFirebaseConfigured, Timestamp } from './firebase-admin.js';
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import {
+  AGENT_ALLOWED_TOOLS,
+  AGENT_DISALLOWED_TOOLS,
+  buildAgentEnv,
+  detectManifestError,
+  getAnthropicModel
+} from './analyzer.js';
 
 const COLLECTION_NAME = 'interviewCriteria';
+
+export const INTERVIEW_TYPE_REGEX = /^[a-zA-Z0-9 _-]{1,80}$/;
+
+/**
+ * Validate that an interviewType is safe for Firestore doc keys and prompt interpolation.
+ */
+export function isValidInterviewType(interviewType: unknown): interviewType is string {
+  return (
+    typeof interviewType === 'string' &&
+    interviewType.trim().length > 0 &&
+    INTERVIEW_TYPE_REGEX.test(interviewType)
+  );
+}
+
+function assertValidInterviewType(interviewType: string): void {
+  if (!isValidInterviewType(interviewType)) {
+    throw new Error('Invalid interviewType: must be 1-80 characters matching [a-zA-Z0-9 _-]');
+  }
+}
 
 export interface CachedCriteria {
   interviewType: string;
@@ -23,6 +49,8 @@ export async function saveCachedCriteria(
   criteria: string,
   source: 'web-search' | 'manual' = 'web-search'
 ): Promise<void> {
+  assertValidInterviewType(interviewType);
+
   if (!isFirebaseConfigured()) {
     console.log('[CriteriaCache] Firebase not configured, skipping cache save');
     return;
@@ -62,7 +90,13 @@ export async function getAllCachedCriteria(): Promise<(CachedCriteria & { id: st
 /**
  * Research interview criteria using Claude agent and save to cache
  */
-export async function refreshCriteriaCache(interviewType: string): Promise<string> {
+export async function refreshCriteriaCache(
+  interviewType: string,
+  queryFn: typeof query = query,
+  saveFn: typeof saveCachedCriteria = saveCachedCriteria
+): Promise<string> {
+  assertValidInterviewType(interviewType);
+
   const currentYear = new Date().getFullYear();
   const searchQuery = `${interviewType.replace(/-/g, ' ')} interview evaluation criteria ${currentYear} what they look for`;
 
@@ -86,12 +120,20 @@ Provide a clear, structured summary of:
 Keep it concise but comprehensive (aim for 500-800 words).
 Do NOT include any preamble - just output the criteria summary directly.`;
 
-  const result = query({
+  const model = getAnthropicModel();
+  const result = queryFn({
     prompt,
     options: {
+      model,
       settingSources: [],
       maxTurns: 5,
-      permissionMode: 'bypassPermissions',
+      tools: AGENT_ALLOWED_TOOLS,
+      allowedTools: AGENT_ALLOWED_TOOLS,
+      disallowedTools: AGENT_DISALLOWED_TOOLS,
+      mcpServers: {},
+      strictMcpConfig: true,
+      permissionMode: 'dontAsk',
+      env: buildAgentEnv(model),
     }
   });
 
@@ -107,8 +149,13 @@ Do NOT include any preamble - just output the criteria summary directly.`;
     throw new Error('Failed to research criteria - no result from agent');
   }
 
+  const manifestError = detectManifestError(criteria);
+  if (manifestError) {
+    throw new Error(manifestError);
+  }
+
   // Save to Firestore
-  await saveCachedCriteria(interviewType, criteria, 'web-search');
+  await saveFn(interviewType, criteria, 'web-search');
 
   return criteria;
 }

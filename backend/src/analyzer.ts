@@ -7,9 +7,37 @@ import Anthropic from '@anthropic-ai/sdk';
 
 // Lazy initialization to ensure env vars are loaded
 let anthropic: Anthropic | null = null;
+
+/**
+ * Check whether any supported LLM credential is configured.
+ */
+export function hasLlmCredentials(): boolean {
+  return Boolean(process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY);
+}
+
+/**
+ * Construct an Anthropic SDK client configured for either Manifest bearer auth
+ * (ANTHROPIC_AUTH_TOKEN) or standard Anthropic API key auth.
+ */
+export function createAnthropicClient(): Anthropic {
+  if (process.env.ANTHROPIC_AUTH_TOKEN) {
+    return new Anthropic({
+      authToken: process.env.ANTHROPIC_AUTH_TOKEN,
+      apiKey: null,
+      baseURL: process.env.ANTHROPIC_BASE_URL || undefined,
+      defaultHeaders: process.env.MANIFEST_AUTH_TYPE
+        ? { 'x-manifest-auth-type': process.env.MANIFEST_AUTH_TYPE }
+        : undefined
+    });
+  }
+  return new Anthropic({
+    baseURL: process.env.ANTHROPIC_BASE_URL || undefined
+  });
+}
+
 function getAnthropicClient(): Anthropic {
   if (!anthropic) {
-    anthropic = new Anthropic();
+    anthropic = createAnthropicClient();
   }
   return anthropic;
 }
@@ -17,6 +45,38 @@ function getAnthropicClient(): Anthropic {
 export type AnalysisMethod = 'agent-sdk' | 'direct-api';
 
 export const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-5';
+
+export const MANIFEST_ERROR_PREFIX = '[🦚 Manifest';
+
+/**
+ * Detect Manifest API Router fake-200 error payloads and format them as an error message.
+ */
+export function detectManifestError(text: string): string | null {
+  const trimmed = text.trimStart();
+  if (trimmed.startsWith(MANIFEST_ERROR_PREFIX)) {
+    return `Manifest router error: ${trimmed}`;
+  }
+  return null;
+}
+
+/**
+ * Return true when an API error is a 400 rejecting the `thinking` parameter.
+ */
+export function isThinkingUnsupportedError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const err = error as { status?: number; message?: string; error?: unknown };
+  const status = err.status;
+  let errorPayload = '';
+  if (err.error !== undefined) {
+    try {
+      errorPayload = JSON.stringify(err.error);
+    } catch {
+      errorPayload = String(err.error);
+    }
+  }
+  const combined = `${err.message || ''} ${errorPayload}`.toLowerCase();
+  return (status === 400 || /\b400\b/.test(combined)) && combined.includes('thinking');
+}
 
 /**
  * Models a client is allowed to request via the `model` field on an analyze
@@ -29,9 +89,13 @@ export const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-5';
  * constrained by this list.
  */
 export const ALLOWED_ANTHROPIC_MODELS: ReadonlySet<string> = new Set([
+  'auto',
   'claude-opus-5',
+  'claude-opus-5-5',
   'claude-sonnet-5',
-  'claude-haiku-4-5'
+  'claude-sonnet-5-5',
+  'claude-haiku-4-5',
+  'claude-haiku-5-5'
 ]);
 
 /**
@@ -72,11 +136,16 @@ export function buildAgentEnv(model: string): Record<string, string> {
     if (value) env[key] = value;
   }
 
-  if (process.env.ANTHROPIC_API_KEY) {
-    env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-  }
   if (process.env.ANTHROPIC_BASE_URL) {
     env.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
+  }
+
+  // Manifest rejects x-api-key and expects Bearer auth via ANTHROPIC_AUTH_TOKEN.
+  // Never forward ANTHROPIC_API_KEY when ANTHROPIC_AUTH_TOKEN is configured.
+  if (process.env.ANTHROPIC_AUTH_TOKEN) {
+    env.ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN;
+  } else if (process.env.ANTHROPIC_API_KEY) {
+    env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   }
 
   env.ANTHROPIC_MODEL = model;
@@ -126,7 +195,9 @@ export function clipAtWord(text: string, max: number): string {
 }
 
 export function getAnthropicModel(override?: string): string {
-  const fallback = process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL;
+  const fallback =
+    process.env.ANTHROPIC_MODEL ||
+    (process.env.ANTHROPIC_AUTH_TOKEN ? 'auto' : DEFAULT_ANTHROPIC_MODEL);
 
   if (!override) return fallback;
 
@@ -309,7 +380,8 @@ Be direct, specific, and constructive. This is for learning, so honest feedback 
  */
 export async function analyzeInterview(
   transcript: string,
-  options: AnalysisOptions = { interviewType: 'generic' }
+  options: AnalysisOptions = { interviewType: 'generic' },
+  queryFn: typeof query = query
 ): Promise<AsyncGenerator<AnalysisMessage>> {
   const prompt = buildAnalysisPrompt(transcript, options.interviewType, options.cachedCriteria);
 
@@ -318,7 +390,7 @@ export async function analyzeInterview(
   // SECURITY: the transcript is attacker-controlled - anyone who can reach the
   // analyze endpoint supplies it, and it lands in the agent's prompt. Treat
   // everything below as a containment boundary, not as tuning.
-  const result = query({
+  const result = queryFn({
     prompt,
     options: {
       model: getAnthropicModel(options.model),
@@ -367,6 +439,7 @@ export async function analyzeInterview(
     let lastThoughtYield = Date.now();
     let textBuffer = '';
     let lastTextYield = Date.now();
+    let pendingManifestError: string | null = null;
 
     for await (const message of result) {
       messageCount++;
@@ -388,11 +461,21 @@ export async function analyzeInterview(
       if (message.type === 'result') {
         // Final result contains the full analysis as a string
         if (message.subtype === 'success' && message.result) {
+          const manifestError = detectManifestError(message.result);
+          if (manifestError) {
+            yield {
+              type: 'error',
+              content: manifestError,
+              timestamp: new Date()
+            };
+            return;
+          }
           yield {
             type: 'result',
             content: message.result,
             timestamp: new Date()
           };
+          pendingManifestError = null;
         }
       } else if (message.type === 'assistant') {
         // Stream assistant message details
@@ -414,12 +497,17 @@ export async function analyzeInterview(
               // Send text content
               const text = block.text.trim();
               if (text) {
-                yield {
-                  type: 'raw',
-                  content: text.substring(0, 500), // Limit length
-                  timestamp: new Date(),
-                  raw: { type: 'text', full: text }
-                };
+                const manifestError = detectManifestError(text);
+                if (manifestError) {
+                  pendingManifestError = manifestError;
+                } else {
+                  yield {
+                    type: 'raw',
+                    content: text.substring(0, 500), // Limit length
+                    timestamp: new Date(),
+                    raw: { type: 'text', full: text }
+                  };
+                }
               }
             } else if (block.type === 'tool_use') {
               // Send tool use info
@@ -530,6 +618,14 @@ export async function analyzeInterview(
         }
       }
     }
+
+    if (pendingManifestError) {
+      yield {
+        type: 'error',
+        content: pendingManifestError,
+        timestamp: new Date()
+      };
+    }
   })();
 }
 
@@ -538,7 +634,8 @@ export async function analyzeInterview(
  */
 export async function analyzeInterviewDirectAPI(
   transcript: string,
-  options: AnalysisOptions = { interviewType: 'generic' }
+  options: AnalysisOptions = { interviewType: 'generic' },
+  clientOverride?: Anthropic
 ): Promise<AsyncGenerator<AnalysisMessage>> {
   const interviewType = options.interviewType;
   const cachedCriteria = options.cachedCriteria;
@@ -590,6 +687,8 @@ Be direct, specific, and constructive.`;
       let finalResult = '';
       let toolCallCount = 0;
       const maxToolCalls = 3;
+      let useThinking = true;
+      const client = clientOverride ?? getAnthropicClient();
 
       // Tool use loop
       while (true) {
@@ -600,55 +699,69 @@ Be direct, specific, and constructive.`;
         };
 
         const model = getAnthropicModel(options.model);
-        const stream = getAnthropicClient().messages.stream({
-          model,
-          // Thinking is on by default on Opus 5 and max_tokens caps thinking + text
-          // together, so this needs far more headroom than the old no-thinking 8000.
-          max_tokens: 32000,
-          // display: 'summarized' is required for the thinking_delta events below.
-          // The API default is 'omitted', which streams empty thinking blocks and
-          // would silently kill the live "Thinking:" feed in the UI.
-          thinking: { type: 'adaptive', display: 'summarized' },
-          tools: cachedCriteria ? undefined : [webSearchTool], // Only provide tool if no cache
-          messages
-        });
+        let response: Anthropic.Message;
 
-        let directThinking = '';
-        let lastDirectYield = Date.now();
+        try {
+          const streamParams: Anthropic.MessageStreamParams = {
+            model,
+            // Thinking is on by default on Opus 5 and max_tokens caps thinking + text
+            // together, so this needs far more headroom than the old no-thinking 8000.
+            max_tokens: 32000,
+            // display: 'summarized' is required for the thinking_delta events below.
+            // The API default is 'omitted', which streams empty thinking blocks and
+            // would silently kill the live "Thinking:" feed in the UI.
+            ...(useThinking ? { thinking: { type: 'adaptive', display: 'summarized' } } : {}),
+            tools: cachedCriteria ? undefined : [webSearchTool], // Only provide tool if no cache
+            messages
+          };
+          const stream = client.messages.stream(streamParams);
 
-        for await (const event of stream) {
-          if (event.type === 'content_block_delta') {
-            const delta = (event as any).delta;
-            if (delta?.type === 'thinking_delta' && delta.thinking) {
-              directThinking += delta.thinking;
-              const now = Date.now();
-              const { emit, rest } = takeSentences(directThinking);
-              directThinking = rest;
-              const clean = emit.replace(/\s+/g, ' ').trim();
-              if (clean.length > 0) {
-                yield {
-                  type: 'raw',
-                  content: `Thinking: ${clean}`,
-                  timestamp: new Date(),
-                  raw: { type: 'thinking_delta', snippet: clean }
-                };
-                lastDirectYield = now;
-              }
-            } else if (delta?.type === 'text_delta' && delta.text) {
-              const now = Date.now();
-              if (now - lastDirectYield > 3000) {
-                yield {
-                  type: 'raw',
-                  content: 'Writing evaluation analysis...',
-                  timestamp: new Date()
-                };
-                lastDirectYield = now;
+          let directThinking = '';
+          let lastDirectYield = Date.now();
+
+          for await (const event of stream) {
+            if (event.type === 'content_block_delta') {
+              const delta = (event as any).delta;
+              if (delta?.type === 'thinking_delta' && delta.thinking) {
+                directThinking += delta.thinking;
+                const now = Date.now();
+                const { emit, rest } = takeSentences(directThinking);
+                directThinking = rest;
+                const clean = emit.replace(/\s+/g, ' ').trim();
+                if (clean.length > 0) {
+                  yield {
+                    type: 'raw',
+                    content: `Thinking: ${clean}`,
+                    timestamp: new Date(),
+                    raw: { type: 'thinking_delta', snippet: clean }
+                  };
+                  lastDirectYield = now;
+                }
+              } else if (delta?.type === 'text_delta' && delta.text) {
+                const now = Date.now();
+                if (now - lastDirectYield > 3000) {
+                  yield {
+                    type: 'raw',
+                    content: 'Writing evaluation analysis...',
+                    timestamp: new Date()
+                  };
+                  lastDirectYield = now;
+                }
               }
             }
           }
-        }
 
-        const response = await stream.finalMessage();
+          response = await stream.finalMessage();
+        } catch (apiError) {
+          if (useThinking && isThinkingUnsupportedError(apiError)) {
+            useThinking = false;
+            console.warn(
+              `[analyzer] Model "${model}" returned 400 for thinking parameter; retrying without thinking.`
+            );
+            continue;
+          }
+          throw apiError;
+        }
 
         // Check if done
         if (response.stop_reason === 'end_turn') {
@@ -706,6 +819,16 @@ Be direct, specific, and constructive.`;
         }
       }
 
+      const manifestError = detectManifestError(finalResult);
+      if (manifestError) {
+        yield {
+          type: 'error',
+          content: manifestError,
+          timestamp: new Date()
+        };
+        return;
+      }
+
       // Yield final result
       yield {
         type: 'result',
@@ -725,14 +848,10 @@ Be direct, specific, and constructive.`;
 }
 
 /**
- * Analyze interview and collect all results (non-streaming version)
+ * Collect final analysis text from an analysis message stream, failing on errors
+ * or Manifest fake-200 error payloads.
  */
-export async function analyzeInterviewSync(
-  transcript: string,
-  options: AnalysisOptions = { interviewType: 'generic' }
-): Promise<string> {
-  const generator = await analyzeInterview(transcript, options);
-
+export async function collectAnalysisSync(generator: AsyncGenerator<AnalysisMessage>): Promise<string> {
   // Only the result messages carry the evaluation. The generator also yields
   // progress traffic - raw SDK events, tool calls and reasoning summaries -
   // which is useful for the live log but must never be concatenated into the
@@ -740,10 +859,34 @@ export async function analyzeInterviewSync(
   // "[system:init][stream_event]Thinking through..." in the response body.
   let fullAnalysis = '';
   for await (const message of generator) {
+    if (message.type === 'error') {
+      throw new Error(message.content);
+    }
     if (message.type === 'result' || message.type === 'text') {
+      const manifestError = detectManifestError(message.content);
+      if (manifestError) {
+        throw new Error(manifestError);
+      }
       fullAnalysis += message.content;
     }
   }
 
+  const manifestError = detectManifestError(fullAnalysis);
+  if (manifestError) {
+    throw new Error(manifestError);
+  }
+
   return fullAnalysis;
+}
+
+/**
+ * Analyze interview and collect all results (non-streaming version)
+ */
+export async function analyzeInterviewSync(
+  transcript: string,
+  options: AnalysisOptions = { interviewType: 'generic' },
+  queryFn: typeof query = query
+): Promise<string> {
+  const generator = await analyzeInterview(transcript, options, queryFn);
+  return collectAnalysisSync(generator);
 }

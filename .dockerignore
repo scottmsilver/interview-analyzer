@@ -1,0 +1,15 @@
+**/node_modules
+**/dist
+**/build
+.git
+.gitignore
+.env
+**/.env
+**/.env.*
+!**/.env.example
+.firebase
+.gstack
+*.log
+npm-debug.log*
+coverage
+*.md
