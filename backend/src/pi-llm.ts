@@ -146,10 +146,10 @@ export function createPiStreamFn(optionsOrMode: CreatePiStreamFnOptions | PiApiM
     }
 
     // In anthropic-messages mode, when ANTHROPIC_AUTH_TOKEN is set (or an explicit
-    // client is provided), pass `client: createAnthropicClient()` and omit `apiKey`
+    // client is provided), pass `client: createAnthropicClient(model.baseUrl)` and omit `apiKey`
     // so pi-ai does not construct `new Anthropic({ apiKey })` with `x-api-key`.
     const hasAuthToken = Boolean(process.env.ANTHROPIC_AUTH_TOKEN);
-    const client = opts.client ?? (hasAuthToken ? createAnthropicClient() : undefined);
+    const client = opts.client ?? (hasAuthToken ? createAnthropicClient(model.baseUrl || undefined) : undefined);
     const apiKey = client
       ? undefined
       : opts.apiKey ?? process.env.ANTHROPIC_API_KEY;

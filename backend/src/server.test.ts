@@ -287,6 +287,45 @@ describe('security headers, auth enforcement, and static SPA serving', () => {
     assert.equal(r2.status, 401);
   });
 
+  it('allows same-origin POST matching Host without ALLOWED_ORIGINS while rejecting untrusted cross-origin requests', async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevAllowedOrigins = process.env.ALLOWED_ORIGINS;
+    process.env.NODE_ENV = 'production';
+    delete process.env.ALLOWED_ORIGINS;
+
+    try {
+      const app = createApp();
+      const baseUrl = await startTestServer(app);
+      const parsed = new URL(baseUrl);
+
+      // Same-origin POST (e.g. combined static/Docker deployment on non-allowlisted port)
+      const sameOriginRes = await fetch(`${baseUrl}/api/analyze`, {
+        method: 'POST',
+        headers: {
+          Origin: `http://${parsed.host}`,
+        },
+      });
+      // Passes CORS and reaches auth middleware (401)
+      assert.equal(sameOriginRes.status, 401);
+      assert.equal(sameOriginRes.headers.get('access-control-allow-origin'), `http://${parsed.host}`);
+
+      // Untrusted cross-origin POST is rejected by CORS (500)
+      const crossOriginRes = await fetch(`${baseUrl}/api/analyze`, {
+        method: 'POST',
+        headers: {
+          Origin: 'https://untrusted.example.com',
+        },
+      });
+      assert.equal(crossOriginRes.status, 500);
+      assert.equal(crossOriginRes.headers.get('access-control-allow-origin'), null);
+    } finally {
+      if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prevNodeEnv;
+      if (prevAllowedOrigins === undefined) delete process.env.ALLOWED_ORIGINS;
+      else process.env.ALLOWED_ORIGINS = prevAllowedOrigins;
+    }
+  });
+
   it('serves static assets with immutable caching and index.html SPA fallback with no-cache', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-static-test-'));
     try {

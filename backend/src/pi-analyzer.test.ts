@@ -284,6 +284,72 @@ describe('pi-llm: Manifest URL normalization, mode resolution, and auth', () => 
     assert.equal(finalMsg.stopReason, 'stop');
     assert.equal(capturedBody.output_config?.effort, 'xhigh');
   });
+
+  it('uses normalized model.baseUrl instead of raw ANTHROPIC_BASE_URL with trailing /v1', async () => {
+    let capturedUrl = '';
+    const srv = http.createServer((req, res) => {
+      capturedUrl = req.url || '';
+      req.resume();
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.write(
+        `event: message_start\ndata: ${JSON.stringify({
+          type: 'message_start',
+          message: {
+            id: 'msg_url',
+            type: 'message',
+            role: 'assistant',
+            model: 'claude-opus-5-5',
+            content: [],
+            stop_reason: null,
+            usage: { input_tokens: 10, output_tokens: 1 },
+          },
+        })}\n\n`,
+      );
+      res.write(
+        `event: content_block_start\ndata: ${JSON.stringify({
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'text', text: '' },
+        })}\n\n`,
+      );
+      res.write(
+        `event: content_block_delta\ndata: ${JSON.stringify({
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: 'OK' },
+        })}\n\n`,
+      );
+      res.write(
+        `event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`,
+      );
+      res.write(
+        `event: message_delta\ndata: ${JSON.stringify({
+          type: 'message_delta',
+          delta: { stop_reason: 'end_turn', stop_sequence: null },
+          usage: { output_tokens: 2 },
+        })}\n\n`,
+      );
+      res.write(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
+      res.end();
+    });
+    activeServers.push(srv);
+    await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
+    const port = (srv.address() as { port: number }).port;
+
+    process.env.ANTHROPIC_AUTH_TOKEN = 'test-manifest-token';
+    process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${port}/v1`;
+
+    const model = createPiModel(`http://127.0.0.1:${port}/v1`, 'claude-opus-5-5', 'anthropic-messages');
+    assert.equal(model.baseUrl, `http://127.0.0.1:${port}`);
+    const streamFn = createPiStreamFn({ apiMode: 'anthropic-messages' });
+    const stream = await streamFn(model, {
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], timestamp: Date.now() }],
+    } as Parameters<StreamFn>[1]);
+    const finalMsg = await stream.result();
+    assert.equal(finalMsg.stopReason, 'stop');
+    assert.equal(new URL(capturedUrl, 'http://localhost').pathname, '/v1/messages');
+  });
 });
 
 describe('pi-analyzer: streaming events, tool calls, intermediate text exclusion, Manifest errors', () => {

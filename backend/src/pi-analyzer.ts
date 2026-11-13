@@ -260,6 +260,7 @@ export async function analyzeInterviewPi(
   const startTime = Date.now();
   let thinkingBuffer = '';
   let textBuffer = '';
+  let lastProgressLength = 0;
   let lastTextYield = Date.now();
   let pendingManifestError: string | null = null;
 
@@ -290,7 +291,7 @@ export async function analyzeInterviewPi(
       } else if (ame.type === 'text_delta' && ame.delta) {
         textBuffer += ame.delta;
         const now = Date.now();
-        if (now - lastTextYield > 3000 || textBuffer.length > 150) {
+        if (now - lastTextYield > 3000 || (textBuffer.length - lastProgressLength) >= 150) {
           const cleanLen = textBuffer.replace(/\s+/g, ' ').trim().length;
           if (cleanLen > 0) {
             queue.push({
@@ -299,13 +300,15 @@ export async function analyzeInterviewPi(
               timestamp: new Date(),
               raw: { type: 'text_progress', length: textBuffer.length },
             });
+            lastProgressLength = textBuffer.length;
+            lastTextYield = now;
           }
-          lastTextYield = now;
         }
       }
     } else if (event.type === 'message_end') {
       flushThinking(true);
       textBuffer = '';
+      lastProgressLength = 0;
       const msg = event.message;
       if (msg.role === 'assistant') {
         const text = extractTextFromAssistantMessage(msg);

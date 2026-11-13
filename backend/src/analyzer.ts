@@ -34,19 +34,20 @@ export function hasLlmCredentials(method?: AnalysisMethod): boolean {
  * Construct an Anthropic SDK client configured for either Manifest bearer auth
  * (ANTHROPIC_AUTH_TOKEN) or standard Anthropic API key auth.
  */
-export function createAnthropicClient(): Anthropic {
+export function createAnthropicClient(baseUrlOverride?: string): Anthropic {
+  const baseURL = baseUrlOverride || process.env.ANTHROPIC_BASE_URL || undefined;
   if (process.env.ANTHROPIC_AUTH_TOKEN) {
     return new Anthropic({
       authToken: process.env.ANTHROPIC_AUTH_TOKEN,
       apiKey: null,
-      baseURL: process.env.ANTHROPIC_BASE_URL || undefined,
+      baseURL,
       defaultHeaders: process.env.MANIFEST_AUTH_TYPE
         ? { 'x-manifest-auth-type': process.env.MANIFEST_AUTH_TYPE }
         : undefined
     });
   }
   return new Anthropic({
-    baseURL: process.env.ANTHROPIC_BASE_URL || undefined
+    baseURL
   });
 }
 

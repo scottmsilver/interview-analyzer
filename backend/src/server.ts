@@ -221,17 +221,28 @@ export function createApp(deps: ServerDeps = {}) {
     'https://interview-analyzer-web.fly.dev'
   ];
 
-  app.use(cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (same-origin, mobile apps, or curl requests)
-      if (!origin) return callback(null, true);
+  app.use(cors<Request>((req, callback) => {
+    const origin = req.headers.origin;
+    // Allow requests with no origin (same-origin GETs, mobile apps, or curl requests)
+    if (!origin) {
+      return callback(null, { origin: true });
+    }
 
-      if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
+    let isSameOrigin = false;
+    const hostHeader = req.get('host');
+    if (hostHeader) {
+      try {
+        isSameOrigin = new URL(origin).host.toLowerCase() === hostHeader.toLowerCase();
+      } catch {
+        isSameOrigin = false;
       }
     }
+
+    if (isSameOrigin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
+      return callback(null, { origin: true });
+    }
+
+    return callback(new Error('Not allowed by CORS'));
   }));
 
   app.use(express.json());
