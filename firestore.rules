@@ -18,6 +18,11 @@ service cloud.firestore {
       return isAdminByUid() || isAdminByEmail();
     }
 
+    // Helper function to check if user is approved (or an admin)
+    function isApprovedUser() {
+      return request.auth != null && ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.approved == true) || isAdmin());
+    }
+
     // Config collection - stores app configuration
     match /config/{configId} {
       // Anyone authenticated can read config
@@ -39,16 +44,16 @@ service cloud.firestore {
 
     // Interview criteria cache - for caching web search results
     match /interviewCriteria/{type} {
-      // Anyone authenticated can read cached criteria
-      allow read: if request.auth != null;
+      // Only approved users (or admins) can read cached criteria
+      allow read: if isApprovedUser();
       // Only admins can write/update cache
       allow write: if isAdmin();
     }
 
     // Interview types - admin-defined job types
     match /interviewTypes/{typeId} {
-      // Anyone authenticated can read interview types (for dropdown)
-      allow read: if request.auth != null;
+      // Only approved users (or admins) can read interview types (for dropdown)
+      allow read: if isApprovedUser();
       // Only admins can create/update/delete
       allow write: if isAdmin();
     }
@@ -90,16 +95,18 @@ service cloud.firestore {
 
     // Analyses collection - stores saved interview analyses
     match /analyses/{analysisId} {
-      // Anyone can read (for future sharing feature)
-      allow read: if true;
+      // Owner-only read; shared links are served via backend GET /api/shared/:shareId
+      allow read: if request.auth != null
+                    && resource.data.userId == request.auth.uid;
 
-      // Only authenticated users can create, and only with their own userId
-      allow create: if request.auth != null
+      // Only approved users can create, and only with their own userId
+      allow create: if isApprovedUser()
                     && request.resource.data.userId == request.auth.uid;
 
-      // Users can update their own analyses
+      // Users can update their own analyses without changing userId ownership
       allow update: if request.auth != null
-                    && resource.data.userId == request.auth.uid;
+                    && resource.data.userId == request.auth.uid
+                    && request.resource.data.userId == resource.data.userId;
 
       // Users can delete their own analyses
       allow delete: if request.auth != null

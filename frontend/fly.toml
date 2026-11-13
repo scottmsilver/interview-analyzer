@@ -2,14 +2,16 @@ app = "interview-analyzer-web"
 primary_region = "sjc"
 
 [build]
-  [build.args]
-    VITE_API_URL = "https://interview-analyzer-api.fly.dev"
-    VITE_FIREBASE_API_KEY = "AIzaSyAHHPgFOJx6ynDZX7vwJthsLhNCF97xu30"
-    VITE_FIREBASE_AUTH_DOMAIN = "interview-analyzer-prod.firebaseapp.com"
-    VITE_FIREBASE_PROJECT_ID = "interview-analyzer-prod"
-    VITE_FIREBASE_STORAGE_BUCKET = "interview-analyzer-prod.firebasestorage.app"
-    VITE_FIREBASE_MESSAGING_SENDER_ID = "542771533591"
-    VITE_FIREBASE_APP_ID = "1:542771533591:web:c0f8915d611340df3c8952"
+  # Pass deployment-specific Firebase and API build arguments at deploy time
+  # (e.g. via `fly deploy --build-arg ...` or CI secrets), never in this public repo:
+  #   VITE_API_URL
+  #   VITE_FUNCTIONS_BASE_URL
+  #   VITE_FIREBASE_API_KEY
+  #   VITE_FIREBASE_AUTH_DOMAIN
+  #   VITE_FIREBASE_PROJECT_ID
+  #   VITE_FIREBASE_STORAGE_BUCKET
+  #   VITE_FIREBASE_MESSAGING_SENDER_ID
+  #   VITE_FIREBASE_APP_ID
 
 [http_service]
   internal_port = 8080

@@ -78,6 +78,26 @@ export function AnalysisHeader({
   )
 }
 
+const SAFE_URL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
+
+/**
+ * Sanitize markdown link/image URLs by allowing only safe protocols and relative paths,
+ * explicitly blocking `javascript:`, `data:`, `vbscript:`, and protocol-relative `//` URLs.
+ */
+function safeUrlTransform(url: string): string {
+  // Strip ASCII control characters and whitespace before protocol inspection
+  // eslint-disable-next-line no-control-regex
+  const cleaned = url.replace(/[\u0000-\u0020]+/g, '')
+  if (!cleaned || cleaned.startsWith('//')) return ''
+  if (cleaned.startsWith('#') || cleaned.startsWith('/')) return url.trim()
+  try {
+    const parsed = new URL(cleaned, 'https://example.com')
+    return SAFE_URL_PROTOCOLS.has(parsed.protocol) ? url.trim() : ''
+  } catch {
+    return ''
+  }
+}
+
 interface AnalysisMarkdownProps {
   content: string
 }
@@ -88,6 +108,7 @@ export function AnalysisMarkdown({ content }: AnalysisMarkdownProps) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
+        urlTransform={safeUrlTransform}
       >
         {content}
       </ReactMarkdown>
@@ -109,7 +130,9 @@ interface LogMarkdownProps {
 export function LogMarkdown({ content }: LogMarkdownProps) {
   return (
     <div className="log-markdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={safeUrlTransform}>
+        {content}
+      </ReactMarkdown>
     </div>
   )
 }
