@@ -9,6 +9,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "test": "tsx src/test-analyzer.ts",
+    "test:unit": "tsx --test src/*.test.ts",
     "compare": "tsx src/compare-methods.ts"
   },
   "keywords": [
