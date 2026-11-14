@@ -66,21 +66,21 @@ interface AnalysisPreset {
 
 const ANALYSIS_PRESETS: ReadonlyArray<AnalysisPreset> = [
   {
-    id: 'pi-gemini-4-hydrogen',
+    id: 'fast',
     method: 'pi-agent',
     model: 'gemini-4-hydrogen',
-    label: 'Fast — Gemini 4 Hydrogen ★ (Default)',
-    shortLabel: 'Fast (Hydrogen)',
-    description: '~1.3 min • 8.5/10 quality, fast coaching',
+    label: 'Fast',
+    shortLabel: 'Fast (~1.5 min)',
+    description: 'About 1–1.5 min • Quick coaching feedback',
     estimatedSeconds: 80,
   },
   {
-    id: 'pi-fable-5-1',
+    id: 'deep',
     method: 'pi-agent',
     model: 'claude-fable-5-1',
-    label: 'Deep — Fable 5.1',
-    shortLabel: 'Deep (Fable 5.1)',
-    description: '~3.8 min • 8.7/10 quality, deepest coaching',
+    label: 'Deep',
+    shortLabel: 'Deep (~4 min)',
+    description: 'About 4 min • Most thorough analysis',
     estimatedSeconds: 230,
   },
 ]
@@ -258,7 +258,7 @@ function MainContent() {
   const [file, setFile] = useState<File | null>(null)
   const [interviewType, setInterviewType] = useState<string>('')
   const [interviewTypes, setInterviewTypes] = useState<InterviewTypeRecord[]>([])
-  const [selectedPresetId, setSelectedPresetId] = useState<string>('pi-gemini-4-hydrogen')
+  const [selectedPresetId, setSelectedPresetId] = useState<string>('fast')
   const selectedPreset = ANALYSIS_PRESETS.find((p) => p.id === selectedPresetId) ?? ANALYSIS_PRESETS[0]
   const [analyzing, setAnalyzing] = useState(false)
   const [analysis, setAnalysis] = useState('')
@@ -537,13 +537,15 @@ function MainContent() {
             try {
               const message = JSON.parse(data)
 
-              // Store both content and raw message
+              // Store both content and raw message, hiding internal telemetry blobs from the UI log
               if (message.type === 'raw') {
-                setAgentLogs(prev => [...prev, {
-                  content: message.content,
-                  raw: message.raw || message,
-                  at: Date.now()
-                }])
+                if (message.raw?.type !== 'pi_telemetry') {
+                  setAgentLogs(prev => [...prev, {
+                    content: message.content,
+                    raw: message.raw || message,
+                    at: Date.now()
+                  }])
+                }
 
                 // The status line shows a steady phase, not live reasoning text.
                 // Reasoning arrives in short bursts many times a second; putting

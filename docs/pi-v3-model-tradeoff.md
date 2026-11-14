@@ -1,6 +1,6 @@
 # Pi v3 Upgrades, Iso-Quality Speed Optimization & 11-Model Tradeoff
 
-> **Headline Result**: Eliminating redundant full-draft verification rewrites and final prose re-emission cut end-to-end latency by **`-35%` to `-42%`** across both production tiers at equal or higher blind-judge quality. **`gemini-4-hydrogen` (`Fast ★ Default`)** dropped from `130.4s` to **`84.3s`** on Dev (`N = 5`, `8.42–8.47/10` composite) and from `115.3s` to **`71.5s`** (`70.8s` median) on the **locked Blind Holdout (`N = 6`)** with **`8.58/10`** composite quality, **`100%` (`12/12`) blind win rate**, and **`0` hallucinated timestamps**. **`claude-fable-5-1` (`Deep`)** dropped from `394.0s` to **`230.4s` (`-41.5%`)** with **`8.73–8.85/10`** composite quality and `0` blind judge losses (`90%–100%` win rate), collapsing the global 11-model Pareto frontier to the exact two UI presets.
+> **Headline Result**: Eliminating redundant full-draft verification rewrites and final prose re-emission cut end-to-end latency by **`-35%` to `-42%`** across both production tiers at equal or higher blind-judge quality. **`gemini-4-hydrogen` (`Fast`, default)** dropped from `130.4s` to **`84.3s`** on Dev (`N = 5`, `8.42–8.47/10` composite) and from `115.3s` to **`71.5s`** (`70.8s` median) on the **locked Blind Holdout (`N = 6`)** with **`8.58/10`** composite quality, **`100%` (`12/12`) blind win rate**, and **`0` hallucinated timestamps**. **`claude-fable-5-1` (`Deep`)** dropped from `394.0s` to **`230.4s` (`-41.5%`)** with **`8.73–8.85/10`** composite quality and `0` blind judge losses (`90%–100%` win rate), collapsing the global 11-model Pareto frontier to the exact two UI presets.
 
 ---
 
@@ -14,12 +14,12 @@
 
 ## 2. Production UI & Backend Defaults
 
-`DEFAULT_ANALYSIS_METHOD` in [`analyzer.ts`](../backend/src/analyzer.ts) and [`server.ts`](../backend/src/server.ts) is `'pi-agent'`, and `DEFAULT_PI_MODEL` in [`pi-analyzer.ts`](../backend/src/pi-analyzer.ts) defaults to `'gemini-4-hydrogen'` under Manifest (`ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_BASE_URL` configured, `ANTHROPIC_MODEL` unset). The Analyze selector in [`App.tsx`](../frontend/src/App.tsx) exposes the **2 Pareto-optimal modes**:
+`DEFAULT_ANALYSIS_METHOD` in [`analyzer.ts`](../backend/src/analyzer.ts) and [`server.ts`](../backend/src/server.ts) is `'pi-agent'`, and `DEFAULT_PI_MODEL` in [`pi-analyzer.ts`](../backend/src/pi-analyzer.ts) defaults to `'gemini-4-hydrogen'` under Manifest (`ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_BASE_URL` configured, `ANTHROPIC_MODEL` unset). The Analyze selector in [`App.tsx`](../frontend/src/App.tsx) exposes the **2 Pareto-optimal modes** cleanly by capability and approximate time (`Fast`, `Deep`), keeping model identifiers internal rather than exposing them in the product UI:
 
-| UI Preset Label | Method | Model ID | Mean Latency | Composite Quality | Win Rate | Default |
+| UI Trigger / Dropdown Label | Method | Internal Model ID | Mean Latency | Composite Quality | Win Rate | Default |
 |---|---|---|---:|---:|---:|:---:|
-| **`Fast — Gemini 4 Hydrogen ★ (Default)`** | **`pi-agent`** | **`gemini-4-hydrogen`** | **84.3s** *(71.5s holdout)* | **8.42–8.47/10** *(8.58/10 holdout)* | **70%–80%** *(100% holdout)* | **Yes** |
-| `Deep — Fable 5.1` | `pi-agent` | `claude-fable-5-1` | **230.4s** | **8.73–8.85/10** | **90%–100%** | — |
+| **`Fast (~1.5 min)` / `Fast`** | **`pi-agent`** | **`gemini-4-hydrogen`** | **84.3s** *(71.5s holdout)* | **8.42–8.47/10** *(8.58/10 holdout)* | **70%–80%** *(100% holdout)* | **Yes** |
+| `Deep (~4 min)` / `Deep` | `pi-agent` | `claude-fable-5-1` | **230.4s** | **8.73–8.85/10** | **90%–100%** | — |
 
 *Why these 2 modes sit alone on the Pareto frontier*: Speed-optimized `gemini-4-hydrogen` (`84.3s` Dev / `71.5s` Holdout) now beats even `claude-sonnet-5-5` (`115.8s`, `7.68/10`) on both latency and quality, while `claude-fable-5-1` (`230.4s`, `8.73–8.85/10`) now runs faster than `claude-opus-5-5` (`235.2s`, `8.49/10`) at higher quality and total win rate.
 

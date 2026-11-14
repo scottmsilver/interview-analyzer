@@ -157,6 +157,7 @@ To provide thoughtful, professional feedback that helps product managers improve
 ### UI Copy Guidelines
 - Use active voice
 - Keep labels short and descriptive
+- Never expose internal AI model names, codenames, provider names, or benchmark scores—describe modes by speed/depth and approximate wait time instead
 - Error messages should be helpful, not technical
 - Success messages should be brief
 - CTAs should start with verbs
@@ -165,9 +166,11 @@ To provide thoughtful, professional feedback that helps product managers improve
 - ✅ "Analyze Interview"
 - ✅ "View Analysis"
 - ✅ "Auto-saved to history"
+- ✅ "Fast (~1.5 min)" / "Deep (~4 min)"
 - ❌ "Submit Form"
 - ❌ "Click Here"
 - ❌ "Error Code 403"
+- ❌ "Fast — Gemini 4 Hydrogen ★ (8.5/10 quality)"
 
 ## Iconography
 
