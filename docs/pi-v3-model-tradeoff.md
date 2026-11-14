@@ -1,6 +1,6 @@
 # Pi v3 Upgrades & 11-Model Quality / Time Tradeoff
 
-> **Headline Result**: Implementing `Pi v3` Upgrades 1–3 plus **universal tool-prompt and verifier hill-climbing** raised `Pi` (`claude-opus-5-5`) to **90%–94.4%** blind-judge win rates and elevated **`gemini-4-hydrogen`** on the **4-model Pareto frontier** from **`7.91/10` (`207.1s`)** to **`8.44/10` (`130.4s`, `70%` win rate)** on Dev (`N = 5`) and **`8.54/10` (`115.3s`, `91.7%` combined blind win rate — `100%` Fable `6/6`, `100%` quote fidelity, `0` hallucinated timestamps)** on a **locked SHA-256-disjoint Blind Holdout (`N = 6`)**. Across **11 live Manifest models** (`55/55` completed), **`pi-agent` (`claude-opus-5-5`)** is the default analyzer across backend and frontend, anchored on the 4-model Pareto frontier alongside **`claude-sonnet-5-5`**, climbed **`gemini-4-hydrogen`**, and **`claude-fable-5-1`**.
+> **Headline Result**: Implementing `Pi v3` Upgrades 1–3 plus **universal tool-prompt and verifier hill-climbing** raised `Pi` (`claude-opus-5-5`) to **90%–94.4%** blind-judge win rates and elevated **`gemini-4-hydrogen`** on the **4-model Pareto frontier** from **`7.91/10` (`207.1s`)** to **`8.44/10` (`130.4s`, `70%` win rate)** on Dev (`N = 5`) and **`8.54/10` (`115.3s`, `91.7%` combined blind win rate — `100%` Fable `6/6`, `100%` quote fidelity, `0` hallucinated timestamps)** on a **locked SHA-256-disjoint Blind Holdout (`N = 6`)**. Across **11 live Manifest models** (`55/55` completed), **`pi-agent`** is the default analyzer across backend and frontend, exposing the streamlined **2-mode Pareto picker**: **`Fast — Gemini 4 Hydrogen ★ (Default)`** (`~2 min`, `DEFAULT_PI_MODEL = 'gemini-4-hydrogen'` under Manifest) and **`Deep — Fable 5.1`** (`~6.5 min`, `8.62/10`, `100%` blind win rate).
 
 ---
 
@@ -14,14 +14,14 @@
 
 ## 2. Production UI & Backend Defaults
 
-`DEFAULT_ANALYSIS_METHOD` in [`analyzer.ts`](../backend/src/analyzer.ts) and [`server.ts`](../backend/src/server.ts) is `'pi-agent'`, and the Analyze dropdown in [`App.tsx`](../frontend/src/App.tsx) exposes the **4 Pareto-optimal `Pi v3` tiers**:
+`DEFAULT_ANALYSIS_METHOD` in [`analyzer.ts`](../backend/src/analyzer.ts) and [`server.ts`](../backend/src/server.ts) is `'pi-agent'`, and `DEFAULT_PI_MODEL` in [`pi-analyzer.ts`](../backend/src/pi-analyzer.ts) defaults to `'gemini-4-hydrogen'` when running through the Manifest router (`ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_BASE_URL` configured, `ANTHROPIC_MODEL` unset). The Analyze dropdown in [`App.tsx`](../frontend/src/App.tsx) focuses on the **2 streamlined Pareto modes**:
 
 | UI Preset Label | Method | Model ID | Mean Latency | Composite Quality | Win Rate | Default |
 |---|---|---|---:|---:|---:|:---:|
-| `Pi Fast — Sonnet 5.5` | `pi-agent` | `claude-sonnet-5-5` | 115.8s | 7.57/10 | 20% | — |
-| `Pi — Gemini 4 Hydrogen` | `pi-agent` | `gemini-4-hydrogen` | **130.4s** *(115.3s holdout)* | **8.44/10** *(8.54/10 holdout)* | **70%** *(91.7% holdout)* | — |
-| **`Pi — Opus 5.5 ★ (Default)`** | **`pi-agent`** | **`claude-opus-5-5`** | **235.2s** | **8.46/10** | **90%** | **Yes** |
-| `Pi Max — Fable 5.1` | `pi-agent` | `claude-fable-5-1` | 394.0s | 8.62/10 | 100% | — |
+| **`Fast — Gemini 4 Hydrogen ★ (Default)`** | **`pi-agent`** | **`gemini-4-hydrogen`** | **130.4s** *(115.3s holdout)* | **8.44/10** *(8.54/10 holdout)* | **70%** *(91.7% holdout)* | **Yes** |
+| `Deep — Fable 5.1` | `pi-agent` | `claude-fable-5-1` | 394.0s | 8.62/10 | 100% | — |
+
+*Why 2 modes in the UI*: Climbed `gemini-4-hydrogen` reaches **`8.44–8.54/10`** quality in **`~2 min`** (`115.3s–130.4s`), delivering virtually the same composite quality as `claude-opus-5-5` (`8.46/10` at `235.2s`) in half the wait while overtaking `claude-sonnet-5-5` (`7.57/10` at `115.8s`), leaving **`claude-fable-5-1`** (`394.0s`, `8.62/10`, `100%` win rate) as the dedicated `Deep` tier.
 
 ---
 
@@ -124,9 +124,9 @@ Sorted by mean wall-clock latency (fastest to slowest; `55/55` completed):
 1. **Universal Hill-Climbing Closed Almost the Entire Quality Gap to `Opus` at Half the Latency**:
    - On Dev (`N = 5`), `gemini-4-hydrogen` improved from `207.1s` / `7.91` / `50%` win to **`130.4s` / `8.44` / `70%` win** (`-37%` latency, `-62%` tokens, `+0.53` quality), matching `gpt-6-luna`'s speed (`130.2s`) while scoring **`+1.94` points higher** (`8.44` vs `6.50`), and even outpacing slow flagship Google models (`gemini-4-argon` `434.4s / 7.97`, `gemini-4-carbon` `537.2s / 8.21`).
    - On the locked **Blind Holdout (`N = 6`)**, generalization held cleanly with zero degradation: **`115.3s` mean (`119.0s` median), `8.54/10` composite (`9.22` Gem / `7.87` Fab), `91.7%` combined blind win rate (`6/6` Fable wins), `100.0%` quote fidelity, `6/6` strict verify pass, and `0` hallucinated timestamps**.
-2. **Anthropic Frontier Remains Strongest for `$0` Subscription Defaults & Peak Depth**:
-   - **Fastest (`claude-sonnet-5-5`, `115.8s`, `7.57/10`)**: Pure Anthropic low-latency option, `100%` quote fidelity, `$0` subscription.
-   - **Default Sweet Spot (`claude-opus-5-5`, `235.2s`, `8.46/10`, `90%` win)**: High win-rate consistency across both judges (`5/5` Gem, `4/5` Fab) at `$0` incremental subscription cost.
+2. **Anthropic `$0` Subscription Frontier & Peak Depth**:
+   - **Fastest `$0` Option (`claude-sonnet-5-5`, `115.8s`, `7.57/10`)**: Pure Anthropic low-latency option, `100%` quote fidelity, `$0` subscription.
+   - **Balanced `$0` Option (`claude-opus-5-5`, `235.2s`, `8.46/10`, `90%` win)**: High win-rate consistency across both judges (`5/5` Gem, `4/5` Fab) at `$0` incremental subscription cost.
    - **Max Quality (`claude-fable-5-1`, `394.0s`, `8.62/10`, `100%` win)**: Perfect `5/5` win rate on both judges (`+158.8s` slower than `opus` for `+0.16` composite lift).
 3. **Cross-Family Judge Calibration**:
    - At the `Pi v3` frontier (`fable-5-1` `8.62`, `opus-5-5` `8.46`, climbed `gemini-4-hydrogen` `8.44` Dev / `8.54` Holdout), both cross-family judges (`gemini-4-carbon` and `claude-fable-5-1`) strongly favored `Pi v3` over historical production analyses while confirming that universal tool-batching and signal-to-noise hygiene lifted both Google and Anthropic models (`opus-5-5` token usage dropped `-25.9%` and quote fidelity climbed `93.6% -> 98.0%`).

@@ -66,38 +66,20 @@ interface AnalysisPreset {
 
 const ANALYSIS_PRESETS: ReadonlyArray<AnalysisPreset> = [
   {
-    id: 'pi-sonnet-5-5',
-    method: 'pi-agent',
-    model: 'claude-sonnet-5-5',
-    label: 'Pi Fast — Sonnet 5.5',
-    shortLabel: 'Pi Fast (Sonnet 5.5)',
-    description: '~2 min • 7.6/10 quality, tool-verified',
-    estimatedSeconds: 120,
-  },
-  {
     id: 'pi-gemini-4-hydrogen',
     method: 'pi-agent',
     model: 'gemini-4-hydrogen',
-    label: 'Pi — Gemini 4 Hydrogen',
-    shortLabel: 'Pi (Gemini 4 Hydrogen)',
-    description: '~2 min • 8.4/10 quality (8.5 holdout), Gemini Pareto',
-    estimatedSeconds: 130,
-  },
-  {
-    id: 'pi-opus-5-5',
-    method: 'pi-agent',
-    model: 'claude-opus-5-5',
-    label: 'Pi — Opus 5.5 ★ (Default)',
-    shortLabel: 'Pi (Opus 5.5)',
-    description: '~4 min • 8.5/10 quality, recommended',
-    estimatedSeconds: 235,
+    label: 'Fast — Gemini 4 Hydrogen ★ (Default)',
+    shortLabel: 'Fast (Hydrogen)',
+    description: '~2 min • 8.5/10 quality, fast coaching',
+    estimatedSeconds: 125,
   },
   {
     id: 'pi-fable-5-1',
     method: 'pi-agent',
     model: 'claude-fable-5-1',
-    label: 'Pi Max — Fable 5.1',
-    shortLabel: 'Pi Max (Fable 5.1)',
+    label: 'Deep — Fable 5.1',
+    shortLabel: 'Deep (Fable 5.1)',
     description: '~6.5 min • 8.6/10 quality, deepest coaching',
     estimatedSeconds: 395,
   },
@@ -276,7 +258,7 @@ function MainContent() {
   const [file, setFile] = useState<File | null>(null)
   const [interviewType, setInterviewType] = useState<string>('')
   const [interviewTypes, setInterviewTypes] = useState<InterviewTypeRecord[]>([])
-  const [selectedPresetId, setSelectedPresetId] = useState<string>('pi-opus-5-5')
+  const [selectedPresetId, setSelectedPresetId] = useState<string>('pi-gemini-4-hydrogen')
   const selectedPreset = ANALYSIS_PRESETS.find((p) => p.id === selectedPresetId) ?? ANALYSIS_PRESETS[0]
   const [analyzing, setAnalyzing] = useState(false)
   const [analysis, setAnalysis] = useState('')
@@ -707,7 +689,7 @@ function MainContent() {
                   Get thoughtful, constructive feedback on your interview practice.
                 </p>
                 <p className="welcome-subtitle">
-                  Default Pi analysis takes about 3 to 4 minutes (or ~2 minutes in Pi Fast mode).
+                  Fast analysis takes about 2 minutes (or ~6.5 minutes in Deep mode).
                 </p>
               </div>
             </div>

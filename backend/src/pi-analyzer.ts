@@ -194,26 +194,35 @@ export const ALLOWED_PI_MODELS: ReadonlySet<string> = new Set([
   'gemini-2.5-flash',
 ]);
 
+export const DEFAULT_PI_MODEL = 'gemini-4-hydrogen';
+
+function resolveFallbackPiModelId(options: Pick<PiAnalysisOptions, 'baseUrl'>): string {
+  const envModel = process.env.ANTHROPIC_MODEL?.trim();
+  if (envModel) {
+    return envModel;
+  }
+  const hasManifestRouter =
+    Boolean(process.env.ANTHROPIC_AUTH_TOKEN) && Boolean(options.baseUrl || process.env.ANTHROPIC_BASE_URL);
+  if (hasManifestRouter) {
+    return DEFAULT_PI_MODEL;
+  }
+  return getAnthropicModel();
+}
+
 export function resolvePiModelId(options: PiAnalysisOptions): string {
   const candidate = options.model?.trim();
   if (candidate) {
     if (options.allowUnlistedModel || ALLOWED_PI_MODELS.has(candidate)) {
       return candidate;
     }
-    const fallback =
-      process.env.ANTHROPIC_MODEL?.trim() ||
-      (process.env.ANTHROPIC_AUTH_TOKEN ? 'auto' : DEFAULT_ANTHROPIC_MODEL);
+    const fallback = resolveFallbackPiModelId(options);
     console.warn(
       `[pi-analyzer] Ignoring unsupported model override "${candidate}"; using "${fallback}". ` +
         `Allowed: ${[...ALLOWED_PI_MODELS].join(', ')}`,
     );
     return fallback;
   }
-  const envModel = process.env.ANTHROPIC_MODEL?.trim();
-  if (envModel) {
-    return envModel;
-  }
-  return getAnthropicModel();
+  return resolveFallbackPiModelId(options);
 }
 
 function extractTextFromAssistantMessage(msg: AssistantMessage): string {

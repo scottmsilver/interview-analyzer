@@ -10,6 +10,7 @@ import {
   ALLOWED_PI_MODELS,
   analyzeInterviewPi,
   buildPiSystemPrompt,
+  DEFAULT_PI_MODEL,
   type PiRunTelemetry,
   resolvePiModelId,
 } from './pi-analyzer.js';
@@ -1010,6 +1011,7 @@ describe('bakeoff CLI guards', () => {
   it('resolvePiModelId allows Codex and Google models without allowUnlistedModel and rejects unlisted overrides', () => {
     delete process.env.ANTHROPIC_MODEL;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
+    delete process.env.ANTHROPIC_BASE_URL;
 
     assert.equal(ALLOWED_PI_MODELS.has('gemini-4-hydrogen'), true);
     for (const model of [
@@ -1027,6 +1029,10 @@ describe('bakeoff CLI guards', () => {
       DEFAULT_ANTHROPIC_MODEL,
     );
     assert.equal(
+      resolvePiModelId({ interviewType: 'generic' }),
+      DEFAULT_ANTHROPIC_MODEL,
+    );
+    assert.equal(
       resolvePiModelId({
         interviewType: 'generic',
         model: 'rogue-expensive-model',
@@ -1035,11 +1041,26 @@ describe('bakeoff CLI guards', () => {
       'rogue-expensive-model',
     );
 
+    process.env.ANTHROPIC_AUTH_TOKEN = 'mnfst-test';
+    assert.equal(resolvePiModelId({ interviewType: 'generic' }), 'auto');
+    process.env.ANTHROPIC_BASE_URL = 'https://router.example.com';
+    assert.equal(resolvePiModelId({ interviewType: 'generic' }), DEFAULT_PI_MODEL);
+    assert.equal(
+      resolvePiModelId({ interviewType: 'generic', model: 'rogue-expensive-model' }),
+      DEFAULT_PI_MODEL,
+    );
+    delete process.env.ANTHROPIC_BASE_URL;
+    assert.equal(
+      resolvePiModelId({ interviewType: 'generic', baseUrl: 'https://router.example.com' }),
+      DEFAULT_PI_MODEL,
+    );
+
     process.env.ANTHROPIC_MODEL = 'gpt-6.1-sol';
     assert.equal(
       resolvePiModelId({ interviewType: 'generic', model: 'rogue-expensive-model' }),
       'gpt-6.1-sol',
     );
+    assert.equal(resolvePiModelId({ interviewType: 'generic' }), 'gpt-6.1-sol');
   });
 
   it('hasLlmCredentials recognizes requestedModel for pi-agent with OPENAI_API_KEY only', () => {
