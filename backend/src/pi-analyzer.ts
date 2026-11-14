@@ -24,6 +24,7 @@ import {
   createVerifyEvaluationDraftTool,
   detectCriteriaScoreMax,
   type VerificationResult,
+  verifyEvaluationDraft,
 } from './pi-tools.js';
 import { createWebFetchTool, createWebSearchTool } from './pi-web.js';
 
@@ -165,9 +166,8 @@ REQUIRED EVALUATION WORKFLOW:
    - **Rewrites & Time-Boxed Practice Drills**:
      - Provide **5–7 Concrete Rewrites** formatted as \`Instead of: "<verbatim quote>" -> After: "<stronger phrasing>"\` (or **2–3 Sample Reframes** in authentic candidate voice if \`cachedCriteria\` asks for \`Sample Reframes\`).
      - Also provide **4–6 Concrete, Time-Boxed Practice Drills & Prep Artifacts** with explicit timers, rules, scripts, or exercises tailored to the candidate's root-cause patterns and rubric coverage gaps (e.g., 30-second answer-first opening ritual, 45-second specificity/check-in rule, scripted stall phrase replacing \`"I don't know"\`, offline-eval vs. online-A/B spec exercise, input-vs-output metrics table, practicing with a non-coaching peer).
-   - **Audience & polish rule**: Write strictly for the candidate and hiring committee—NEVER mention internal tools, parsers, scripts, verification loops, or tool quirks (never write "the parser failed", "the tool reported 0:0", or \`verify_evaluation_draft\`).
-5. MANDATORY: Call \`verify_evaluation_draft\` with your complete Markdown draft BEFORE emitting your final response. If \`passed\` is \`false\`, fix every flagged issue and re-run \`verify_evaluation_draft\` until \`passed\` is \`true\`.
-6. In your final assistant turn (after all tool calls finish), output ONLY the final verified Markdown evaluation with no preamble or tool narration.`;
+   - **Audience & polish rule**: Write strictly for the candidate and hiring committee—NEVER mention internal tools, parsers, scripts, verification loops, or tool quirks (never write "the parser failed", "the tool reported 0:0", or \`verify_evaluation_draft\`), and emit zero conversational preamble or narration.
+5. MANDATORY: Once your evaluation draft is complete, call \`verify_evaluation_draft\` with \`draftMarkdown\`. When \`passed\` is \`true\`, \`verify_evaluation_draft\` automatically finalizes and submits your verified draft as the final response—do NOT re-emit the draft afterward. If \`passed\` is \`false\`, fix every flagged issue by calling \`verify_evaluation_draft\` with surgical \`edits: [{ oldText, newText }]\` (only replacing the affected lines/quotes rather than regenerating the entire document) until \`passed\` is \`true\`.`;
 }
 
 export const ALLOWED_PI_MODELS: ReadonlySet<string> = new Set([
@@ -271,6 +271,7 @@ export async function analyzeInterviewPi(
   // State tracked across the agent loop
   const toolCallMetrics: PiToolCallMetric[] = [];
   let verificationPassed = false;
+  let verifiedDraftMarkdown: string | null = null;
   let turnsCompleted = 0;
 
   const tools = [
@@ -287,8 +288,9 @@ export async function analyzeInterviewPi(
     createVerifyEvaluationDraftTool(
       () => transcript,
       undefined,
-      (res: VerificationResult) => {
+      (res: VerificationResult, draftMarkdown: string) => {
         verificationPassed = res.passed;
+        verifiedDraftMarkdown = res.passed && draftMarkdown.trim() ? draftMarkdown.trim() : null;
       },
       { cachedCriteria: options.cachedCriteria },
     ),
@@ -313,7 +315,7 @@ export async function analyzeInterviewPi(
     }),
     finishTurn: () => {
       turnsCompleted += 1;
-      if (turnsCompleted >= maxTurns) {
+      if ((verificationPassed && verifiedDraftMarkdown) || turnsCompleted >= maxTurns) {
         return { action: 'end' };
       }
       return undefined;
@@ -329,6 +331,9 @@ export async function analyzeInterviewPi(
   let textBuffer = '';
   let lastProgressLength = 0;
   let lastTextYield = Date.now();
+  let toolArgChars = 0;
+  let lastToolProgressLength = 0;
+  let lastToolProgressYield = Date.now();
   let pendingManifestError: string | null = null;
 
   const flushThinking = (force: boolean) => {
@@ -371,11 +376,29 @@ export async function analyzeInterviewPi(
             lastTextYield = now;
           }
         }
+      } else if (ame.type === 'toolcall_delta' && ame.delta) {
+        const activeContent = ame.partial?.content?.[ame.contentIndex];
+        if (activeContent?.type === 'toolCall' && activeContent.name === 'verify_evaluation_draft') {
+          toolArgChars += ame.delta.length;
+          const now = Date.now();
+          if (now - lastToolProgressYield > 3000 || (toolArgChars - lastToolProgressLength) >= 300) {
+            queue.push({
+              type: 'raw',
+              content: `Writing & verifying evaluation (${toolArgChars} chars generated)`,
+              timestamp: new Date(),
+              raw: { type: 'text', length: toolArgChars },
+            });
+            lastToolProgressLength = toolArgChars;
+            lastToolProgressYield = now;
+          }
+        }
       }
     } else if (event.type === 'message_end') {
       flushThinking(true);
       textBuffer = '';
       lastProgressLength = 0;
+      toolArgChars = 0;
+      lastToolProgressLength = 0;
       const msg = event.message;
       if (msg.role === 'assistant') {
         const text = extractTextFromAssistantMessage(msg);
@@ -467,8 +490,8 @@ export async function analyzeInterviewPi(
         return;
       }
 
-      // If maxTurns was hit while still requesting tools, force one final tool-free synthesis turn
-      if (lastAssistant.stopReason === 'toolUse') {
+      // If maxTurns was hit while still requesting tools (and not already finalized via verify_evaluation_draft), force one final tool-free synthesis turn
+      if (lastAssistant.stopReason === 'toolUse' && !(verificationPassed && verifiedDraftMarkdown)) {
         if (consumerClosed) return;
         agent.state.tools = [];
         turnsCompleted = 0;
@@ -503,16 +526,21 @@ export async function analyzeInterviewPi(
         return;
       }
 
-      if (lastAssistant.stopReason !== 'stop' && lastAssistant.stopReason !== 'length') {
-        queue.push({
-          type: 'error',
-          content: `Pi agent ended with unexpected stopReason: ${lastAssistant.stopReason}`,
-          timestamp: new Date(),
-        });
-        return;
+      let finalText = '';
+      if (verificationPassed && verifiedDraftMarkdown) {
+        finalText = verifiedDraftMarkdown;
+      } else {
+        if (lastAssistant.stopReason !== 'stop' && lastAssistant.stopReason !== 'length') {
+          queue.push({
+            type: 'error',
+            content: `Pi agent ended with unexpected stopReason: ${lastAssistant.stopReason}`,
+            timestamp: new Date(),
+          });
+          return;
+        }
+        finalText = extractTextFromAssistantMessage(lastAssistant);
       }
 
-      const finalText = extractTextFromAssistantMessage(lastAssistant);
       const manifestError = detectManifestError(finalText);
       if (manifestError) {
         queue.push({
@@ -521,6 +549,15 @@ export async function analyzeInterviewPi(
           timestamp: new Date(),
         });
         return;
+      }
+
+      if (!verificationPassed && finalText.trim().length > 0) {
+        const passiveResult = verifyEvaluationDraft(transcript, finalText, {
+          cachedCriteria: options.cachedCriteria,
+        });
+        if (passiveResult.passed) {
+          verificationPassed = true;
+        }
       }
 
       const usage = assistantMessages.reduce(

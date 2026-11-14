@@ -976,6 +976,113 @@ Provide Score (1–5), What worked, What to improve.
     assert.ok(telemetry);
     assert.equal((telemetry as PiRunTelemetry).verificationPassed, true);
   });
+
+  it('supports surgical edits via verify_evaluation_draft and terminates immediately on pass without re-emitting prose', async () => {
+    const transcript = 'Interviewer: Walk me through your launch metrics.\nCandidate: We measured weekly active teams and activation drop-off across onboarding.';
+    const initialDraft = [
+      '### Question 1: Launch Metrics',
+      '- **Score**: 7/10',
+      '- Candidate cited "fabricated quote that was not in the session" during onboarding.',
+      '',
+      '## Overall Assessment',
+      '- **Overall Score**: 7/10',
+      '- **Pass Verdict**: Borderline',
+      '- **Talk-to-Listen Ratio**: 58:42',
+      '- **Top 3 Strengths**: Structured answer.',
+      '- **Top 3 Critical Weaknesses**: Needed guardrail metrics.',
+      '',
+      '1. Instead of: "We measured weekly active teams" -> After: "Define the target segment first."',
+      '2. Before: "activation drop-off across onboarding" -> After: "Quantify the exact step drop."',
+      '3. Before: "We measured weekly active teams and activation drop-off" -> After: "Pair activation with retention."',
+      '4. Before: "weekly active teams and activation drop-off" -> After: "Set 30-day cohort guardrails."',
+      '5. Before: "activation drop-off across onboarding" -> After: "Segment by workspace size."',
+    ].join('\n');
+    const fixedQuote = 'We measured weekly active teams and activation drop-off';
+
+    let step = 0;
+    const seenToolResults: any[] = [];
+    const surgicalStream: StreamFn = (model, context) => {
+      step += 1;
+      for (const m of context.messages) {
+        if ((m as any).role === 'toolResult') {
+          seenToolResults.push(m);
+        }
+      }
+      const stream = new AssistantMessageEventStream();
+      queueMicrotask(() => {
+        if (step === 1) {
+          const msg: AssistantMessage = {
+            role: 'assistant',
+            content: [
+              {
+                type: 'toolCall',
+                id: 'tc_v1',
+                name: 'verify_evaluation_draft',
+                arguments: { draftMarkdown: initialDraft },
+              },
+            ],
+            api: model.api,
+            provider: model.provider,
+            model: model.id,
+            usage: makeUsage(40, 100),
+            stopReason: 'toolUse',
+            timestamp: Date.now(),
+          };
+          stream.push({ type: 'start', partial: msg });
+          stream.push({ type: 'done', reason: 'toolUse', message: msg });
+        } else if (step === 2) {
+          const msg: AssistantMessage = {
+            role: 'assistant',
+            content: [
+              {
+                type: 'toolCall',
+                id: 'tc_v2',
+                name: 'verify_evaluation_draft',
+                arguments: {
+                  edits: [
+                    {
+                      oldText: 'fabricated quote that was not in the session',
+                      newText: fixedQuote,
+                    },
+                  ],
+                },
+              },
+            ],
+            api: model.api,
+            provider: model.provider,
+            model: model.id,
+            usage: makeUsage(50, 15),
+            stopReason: 'toolUse',
+            timestamp: Date.now(),
+          };
+          stream.push({ type: 'start', partial: msg });
+          stream.push({ type: 'done', reason: 'toolUse', message: msg });
+        } else {
+          throw new Error(`Unexpected turn ${step}: loop should terminate after passing verify_evaluation_draft`);
+        }
+      });
+      return stream;
+    };
+
+    let telemetry: PiRunTelemetry | undefined;
+    const gen = await analyzeInterviewPi(transcript, { interviewType: 'google-apm' }, surgicalStream);
+    const wrapped = (async function* () {
+      for await (const msg of gen) {
+        if (msg.type === 'raw' && msg.raw?.type === 'pi_telemetry') {
+          telemetry = msg.raw as PiRunTelemetry;
+        }
+        yield msg;
+      }
+    })();
+    const result = await collectAnalysisSync(wrapped);
+    assert.equal(step, 2);
+    assert.ok(telemetry);
+    assert.equal(telemetry.turns, 2);
+    assert.equal(telemetry.verificationPassed, true);
+    assert.equal(result.includes(fixedQuote), true);
+    assert.equal(result.includes('fabricated quote that was not in the session'), false);
+    assert.ok(seenToolResults.length > 0);
+  });
 });
 
 describe('bakeoff CLI guards', () => {

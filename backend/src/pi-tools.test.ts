@@ -15,6 +15,7 @@ import {
   auditAnswerQuality,
   classifySpeakerRole,
   computeTranscriptMetrics,
+  createVerifyEvaluationDraftTool,
   detectCriteriaScoreMax,
   extractQaTurns,
   parseTranscript,
@@ -1045,6 +1046,76 @@ Quantify adoption.
     assert.equal(sneakFabrication.passed, false);
     assert.ok(sneakFabrication.summary.unverifiedQuotes.some((q) => /fabricated a completely fake quote/.test(q)));
     assert.ok(sneakFabrication.summary.unverifiedQuotes.some((q) => /fabricated a cited quote/.test(q)));
+  });
+
+  it('exempts prescribed bar-raiser subheadings and multi-bullet lists while supporting stateful verify edits', async () => {
+    const transcript = [
+      '00:01:00',
+      'Interviewer: How would you prioritize improvements to our checkout funnel?',
+      '00:01:30',
+      'Candidate: I would look at drop-off rates across mobile and desktop and run an experiment on the payment step.',
+    ].join('\n');
+
+    const withPrescribedBlocks = `
+### Question 1: Checkout Funnel Prioritization
+- **Score**: 7/10
+- Candidate grounded the answer: "I would look at drop-off rates across mobile and desktop and run an experiment on the payment step."
+
+#### What a Bar-Raiser Candidate Says Instead
+- "First, I would isolate mobile web versus native app checkout abandonment between cart review and payment confirmation."
+- "Second, I would pair conversion lift with fraud chargeback rate and latency guardrails before shipping globally."
+
+**Suggested answer:**
+- "Segment abandonment by payment rail first so we do not average away mobile Apple Pay failures."
+- "Quantify expected revenue per session against engineering cost before selecting the test variant."
+
+## Overall Assessment
+- **Overall Score**: 7/10
+- **Pass Verdict**: Yes
+- **Talk-to-Listen Ratio**: 67:33
+- **Top 3 Strengths**: Clear focus on payment step.
+- **Top 3 Critical Weaknesses**: Missing segmentation and guardrails.
+
+1. Instead of: "I would look at drop-off rates" -> After: "Segment drop-off by device and payment rail."
+2. Before: "across mobile and desktop" -> After: "Break out iOS, Android, and desktop web cohorts."
+3. Before: "run an experiment on the payment step" -> After: "Size the experiment around 30-day revenue retention."
+4. Before: "I would look at drop-off rates across mobile and desktop" -> After: "Isolate guest versus signed-in funnel steps."
+5. Before: "run an experiment on the payment step" -> After: "Add auth-failure and chargeback guardrails."
+`;
+
+    const badDraft = withPrescribedBlocks.replace(
+      '"I would look at drop-off rates across mobile and desktop and run an experiment on the payment step."',
+      '"I would completely redesign the entire storefront before checking telemetry."',
+    );
+
+    const toolResults: Array<{ res: any; draft: string }> = [];
+    const tool = createVerifyEvaluationDraftTool(
+      () => transcript,
+      undefined,
+      (res, draft) => toolResults.push({ res, draft }),
+    );
+
+    const first = await tool.execute('tc1', { draftMarkdown: badDraft });
+    const firstParsed = JSON.parse((first.content[0] as { type: 'text'; text: string }).text);
+    assert.equal(firstParsed.passed, false);
+    assert.equal(first.terminate, undefined);
+    assert.ok(firstParsed.summary.unverifiedQuotes.some((q: string) => /completely redesign/.test(q)));
+
+    const second = await tool.execute('tc2', {
+      edits: [
+        {
+          oldText: 'I would completely redesign the entire storefront before checking telemetry.',
+          newText: 'I would look at drop-off rates across mobile and desktop and run an experiment on the payment step.',
+        },
+      ],
+    });
+    const secondParsed = JSON.parse((second.content[0] as { type: 'text'; text: string }).text);
+    assert.equal(secondParsed.passed, true, `Expected patched draft to pass, got: ${secondParsed.issues.join('; ')}`);
+    assert.equal(secondParsed.finalized, true);
+    assert.equal(second.terminate, true);
+    assert.equal(toolResults.length, 2);
+    assert.equal(toolResults[1].res.passed, true);
+    assert.ok(toolResults[1].draft.includes('drop-off rates across mobile and desktop'));
   });
 });
 

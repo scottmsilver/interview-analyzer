@@ -1,5 +1,5 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
-import { int, obj, opt, str } from '@earendil-works/pi-schema';
+import { arr, int, obj, opt, str } from '@earendil-works/pi-schema';
 
 export type TimestampFormat =
   | 'bracket-hms'
@@ -1503,12 +1503,14 @@ export function verifyEvaluationDraft(
     );
   }
 
-  // Locate Sample Reframes & Practice Drills sections respecting heading hierarchy (exits on any equal-or-higher heading)
+  // Locate Sample Reframes, Practice Drills & Prescribed Bar-Raiser sections respecting heading hierarchy (exits on any equal-or-higher heading)
   const sampleReframesBodyLines: string[] = [];
   const inSampleReframesLine = new Set<number>();
   const inPracticeDrillsLine = new Set<number>();
+  const inPrescribedSectionLine = new Set<number>();
   let reframeHeadingLevel: number | null = null;
   let drillsHeadingLevel: number | null = null;
+  let prescribedHeadingLevel: number | null = null;
   for (let i = 0; i < lines.length; i += 1) {
     const headingMatch = lines[i].match(/^\s*(#{1,6})\s+(.+)$/);
     if (headingMatch) {
@@ -1519,6 +1521,9 @@ export function verifyEvaluationDraft(
       }
       if (drillsHeadingLevel !== null && level <= drillsHeadingLevel) {
         drillsHeadingLevel = null;
+      }
+      if (prescribedHeadingLevel !== null && level <= prescribedHeadingLevel) {
+        prescribedHeadingLevel = null;
       }
       if (
         /^(?:(?:part|section)\s+\d+\s*[:.)-]?\s*|\d+[.)]\s*|[ivx]+[.)]\s*)?sample\s+reframes\b/i.test(
@@ -1536,6 +1541,14 @@ export function verifyEvaluationDraft(
         drillsHeadingLevel = level;
         continue;
       }
+      if (
+        /(?:what\s+a\s+)?(?:strong|bar[- ]raiser)\s+candidate\s+(?:says|does|would\s+say)|bar[- ]raiser\s+(?:comparison|response|answer|example|version)|model\s+(?:answer|response)|stronger\s+(?:alternative|response|answer|phrasing)/i.test(
+          headingTitle,
+        )
+      ) {
+        prescribedHeadingLevel = level;
+        continue;
+      }
     }
     if (reframeHeadingLevel !== null) {
       inSampleReframesLine.add(i);
@@ -1544,24 +1557,39 @@ export function verifyEvaluationDraft(
     if (drillsHeadingLevel !== null) {
       inPracticeDrillsLine.add(i);
     }
+    if (prescribedHeadingLevel !== null) {
+      inPrescribedSectionLine.add(i);
+    }
   }
 
   // 2. Verify quoted snippets (>= 20 chars) excluding prescribed "After" / suggested rewrites
+  const PRESCRIBED_COLON_HEADER_RE =
+    /(?:\bafter\b|\bsays?\s+instead\b|\bdoes\s+(?:instead|differently)\b|\btry(?:\s+saying)?\b|\breframe\b|\brephrase\b|\breplacement(?:\s+(?:script|phrasing|line))?\b|\bscript\b|\bstall\s+phrase\b|\bopening\s+ritual\b|suggested(?:\s+(?:answer|reframe|version|phrasing|response|script))?(?:\s+to\s+[^:]{1,40})?|stronger\s+(?:alternative|version|phrasing|response)|model\s+(?:answer|response)|revised(?:\s+(?:answer|version))?|(?:what\s+a\s+)?(?:strong|bar[- ]raiser)\s+candidate\s+(?:does|says|would\s+say)(?:\s+(?:instead|differently))?)\s*:\s*$/i;
   const normalizedTranscript = normalizeForQuoteMatch(transcript);
   let verifiedQuoteCount = 0;
   const unverifiedQuotes: string[] = [];
   let prevNonEmptyLine = '';
+  let inPrescribedListBlock = false;
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     const trimmedLine = line.trim();
     const isHeadingLine = /^\s*#{1,6}\s+/.test(line);
     const prevStripped = prevNonEmptyLine.replace(/[*_`>]/g, '').trim();
-    const hasPrescribedPrevLine =
-      !isHeadingLine &&
-      /(?:\bafter\b|\bsays?\s+instead\b|\bdoes\s+(?:instead|differently)\b|\btry(?:\s+saying)?\b|\breframe\b|\brephrase\b|\breplacement(?:\s+(?:script|phrasing|line))?\b|\bscript\b|\bstall\s+phrase\b|\bopening\s+ritual\b|suggested(?:\s+(?:answer|reframe|version|phrasing|response|script))?(?:\s+to\s+[^:]{1,40})?|stronger\s+(?:alternative|version|phrasing|response)|model\s+(?:answer|response)|revised(?:\s+(?:answer|version))?|(?:what\s+a\s+)?(?:strong|bar[- ]raiser)\s+candidate\s+(?:does|says|would\s+say)(?:\s+(?:instead|differently))?)\s*:\s*$/i.test(
-        prevStripped,
-      );
+    const cleanStripped = trimmedLine.replace(/[*_`>]/g, '').trim();
+    const hasPrescribedPrevLine = !isHeadingLine && PRESCRIBED_COLON_HEADER_RE.test(prevStripped);
+    const isPrescribedHeaderLine = !isHeadingLine && PRESCRIBED_COLON_HEADER_RE.test(cleanStripped);
+    const isBulletedOrIndented = /^\s*(?:[-*+]|\d+[.)])\s+\S|^\s{2,}\S/.test(line);
+    const hasClockOrTurnRef = /\b\d{1,2}:\d{2}\b|\bturn\s*#\s*\d+/i.test(line);
+
+    if (isHeadingLine || trimmedLine.length === 0) {
+      inPrescribedListBlock = false;
+    } else if (!isPrescribedHeaderLine && !isBulletedOrIndented) {
+      inPrescribedListBlock = false;
+    }
+    const isActivePrescribedListLine =
+      isBulletedOrIndented && (inPrescribedListBlock || hasPrescribedPrevLine);
+    let lineHasSourceQuotePrefix = false;
 
     const isPrescribedRewriteLine =
       /^\s*(?:[-*]|\d+\.)?\s*(?:\*\*)?(?:after|suggested(?:\s+(?:answer|reframe|version|phrasing|response|script))?|say\s+instead|replacement(?:\s+(?:script|phrasing|line))?|stall\s+phrase|script|stronger\s+(?:alternative|version|phrasing|response)|rewrite|model\s+(?:answer|response)|what\s+a\s+strong\s+candidate\s+(?:does|says)|what\s+a\s+bar-raiser)\b/i.test(
@@ -1581,6 +1609,9 @@ export function verifyEvaluationDraft(
         /\bcandidate\b\s*:|\b(?:instead\s+of|before|original|current|actual|weak(?:er|est)?|initial|first[- ]pass|transcript|verbatim|the\s+candidate|interviewer|said|asked|stated|claimed|mentioned|wrote|quoted|their\s+(?:answer|response|words)|what\s+(?:they|you))\b/i.test(
           clauseBeforeQuote,
         );
+      if (hasSourceQuotePrefix) {
+        lineHasSourceQuotePrefix = true;
+      }
       const hasPrescribedPrefix =
         /(?:->|→)\s*$/.test(prefixBeforeQuote) ||
         /(?:\bafter\b|\bsays?\s+instead\b|\bdoes\s+(?:instead|differently)\b|\btry(?:\s+saying)?\b|\breframe\b|\brephrase\b|\breplacement(?:\s+(?:script|phrasing|line))?\b|\bscript\b|\bstall\s+phrase\b|\bopening\s+ritual\b|could\s+(?:say|answer|open\s+with)|might\s+(?:say|answer)|would\s+say|suggested(?:\s+(?:answer|reframe|version|phrasing|response|script))?(?:\s+to\s+(?:the\s+)?(?:interviewer|this|that|question(?:\s+\d+)?))?|stronger\s+(?:alternative|version|phrasing|response)|model\s+(?:answer|response)|revised(?:\s+(?:answer|version))?|(?:\bwhat\s+a\s+)?(?:strong|bar[- ]raiser)(?:\s+candidate(?:\s+would\s+say|\s+(?:does|says)(?:\s+(?:instead|differently))?)?|\s+(?:answer|response|comparison)))\s*:?\s*$/i.test(
@@ -1590,17 +1621,21 @@ export function verifyEvaluationDraft(
         inSampleReframesLine.has(i) &&
         !hasSourceQuotePrefix &&
         !/\b(?:question|prompt)\s*:?\s*$/i.test(clauseBeforeQuote);
+      const isPrescribedSectionLine =
+        inPrescribedSectionLine.has(i) && !hasSourceQuotePrefix && !hasClockOrTurnRef;
       const isScriptInPracticeDrills =
-        inPracticeDrillsLine.has(i) &&
-        !hasSourceQuotePrefix &&
-        !/\b\d{1,2}:\d{2}\b|\bturn\s*#\s*\d+/i.test(line);
+        inPracticeDrillsLine.has(i) && !hasSourceQuotePrefix && !hasClockOrTurnRef;
+      const isPrescribedListItem =
+        isActivePrescribedListLine && !hasSourceQuotePrefix && !hasClockOrTurnRef;
       if (
         hasPrescribedPrefix ||
         (!hasSourceQuotePrefix &&
           (isPrescribedRewriteLine ||
             isStandaloneOrLabeledReframeInSection ||
             hasPrescribedPrevLine ||
-            isScriptInPracticeDrills))
+            isPrescribedSectionLine ||
+            isScriptInPracticeDrills ||
+            isPrescribedListItem))
       ) {
         continue;
       }
@@ -1624,16 +1659,22 @@ export function verifyEvaluationDraft(
 
     if (isHeadingLine) {
       prevNonEmptyLine = '';
+      inPrescribedListBlock = false;
     } else if (trimmedLine.length > 0) {
       prevNonEmptyLine = trimmedLine;
+      if (lineHasSourceQuotePrefix) {
+        inPrescribedListBlock = false;
+      } else if (isPrescribedHeaderLine || isActivePrescribedListLine) {
+        inPrescribedListBlock = true;
+      }
     }
   }
 
   if (unverifiedQuotes.length > 0) {
     issues.push(
       `Unverified verbatim quote(s) not found in transcript: ${unverifiedQuotes
-        .slice(0, 3)
-        .map((q) => `"${q.slice(0, 60)}"`)
+        .slice(0, 10)
+        .map((q) => `"${q.slice(0, 120)}"`)
         .join('; ')}`,
     );
   }
@@ -1907,29 +1948,117 @@ export function createAuditAnswerQualityTool(
 export function createVerifyEvaluationDraftTool(
   getTranscript: () => string,
   recordToolCall?: (name: string) => void,
-  onVerified?: (result: VerificationResult) => void,
+  onVerified?: (result: VerificationResult, draftMarkdown: string) => void,
   options: VerifyEvaluationOptions = {},
 ): AgentTool {
+  let storedDraft = '';
+  const editSchema = obj({
+    oldText: str({ description: 'Exact substring in the stored draftMarkdown to replace.' }),
+    newText: str({ description: 'Replacement text for oldText.' }),
+  });
   const schema = obj({
-    draftMarkdown: str({
-      description: 'Complete Markdown evaluation draft to verify against transcript ground truth before returning final response.',
-    }),
+    draftMarkdown: opt(
+      str({
+        description:
+          'Complete Markdown evaluation draft on your first verification call (or full replacement if needed). Omit when passing surgical edits.',
+      }),
+    ),
+    edits: opt(
+      arr(editSchema, {
+        description:
+          'Surgical exact-string replacements applied in order to your previously submitted draftMarkdown when fixing verification issues, avoiding full-draft regeneration.',
+      }),
+    ),
   });
   return {
     name: 'verify_evaluation_draft',
     label: 'Verify evaluation draft citations',
     description:
-      'Deterministically verify your draft evaluation against the parsed transcript: flags hallucinated clock timestamps when untimestamped, verifies quoted snippets (>=20 chars), checks talk-to-listen ratio accuracy (<=5pp drift), and checks required sections and rewrites/sample reframes respecting cachedCriteria format. Always call this before your final response.',
+      'Deterministically verify your draft evaluation against the parsed transcript: flags hallucinated clock timestamps when untimestamped, verifies quoted snippets (>=20 chars), checks talk-to-listen ratio accuracy (<=5pp drift), and checks required sections and rewrites/sample reframes respecting cachedCriteria format. When passed=true, automatically finalizes your draft as the final response. If passed=false, fix only flagged issues using surgical edits: [{ oldText, newText }] without regenerating the full draft.',
     parameters: schema,
     execute: async (_id, params): Promise<AgentToolResult<Record<string, never>>> => {
-      const draft = String((params as { draftMarkdown?: unknown })?.draftMarkdown ?? '');
-      const result = verifyEvaluationDraft(getTranscript(), draft, options);
+      const typed = params as {
+        draftMarkdown?: unknown;
+        edits?: Array<{ oldText?: unknown; newText?: unknown }>;
+      };
+      if (typeof typed?.draftMarkdown === 'string' && typed.draftMarkdown.trim().length > 0) {
+        storedDraft = typed.draftMarkdown;
+      }
+
+      const editIssues: string[] = [];
+      if (Array.isArray(typed?.edits) && typed.edits.length > 0) {
+        if (!storedDraft) {
+          recordToolCall?.('verify_evaluation_draft');
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  passed: false,
+                  issues: ['Submit initial draftMarkdown before applying edits.'],
+                }),
+              },
+            ],
+            details: {},
+            isError: true,
+          };
+        }
+        for (const edit of typed.edits) {
+          const oldText = typeof edit?.oldText === 'string' ? edit.oldText : '';
+          const newText = typeof edit?.newText === 'string' ? edit.newText : '';
+          if (!oldText || !storedDraft.includes(oldText)) {
+            editIssues.push(
+              `Edit oldText not found in stored draft: "${String(edit?.oldText ?? '').slice(0, 100)}"`,
+            );
+          } else {
+            storedDraft = storedDraft.split(oldText).join(newText);
+          }
+        }
+      }
+
+      if (!storedDraft.trim()) {
+        recordToolCall?.('verify_evaluation_draft');
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                passed: false,
+                issues: ['Provide draftMarkdown on the initial verification call.'],
+              }),
+            },
+          ],
+          details: {},
+          isError: true,
+        };
+      }
+
+      const baseResult = verifyEvaluationDraft(getTranscript(), storedDraft, options);
+      const finalResult: VerificationResult =
+        editIssues.length > 0
+          ? {
+              ...baseResult,
+              passed: false,
+              issues: [...editIssues, ...baseResult.issues],
+            }
+          : baseResult;
+
       recordToolCall?.('verify_evaluation_draft');
-      onVerified?.(result);
+      onVerified?.(finalResult, storedDraft);
+
+      const payload = finalResult.passed
+        ? { ...finalResult, finalized: true }
+        : {
+            ...finalResult,
+            fixHint:
+              'Call verify_evaluation_draft({ edits: [{ oldText, newText }] }) with minimal exact replacements to fix every issue above without regenerating the full draft.',
+          };
+
       return {
-        content: [{ type: 'text', text: JSON.stringify(result) }],
+        content: [{ type: 'text', text: JSON.stringify(payload) }],
         details: {},
         isError: false,
+        ...(finalResult.passed ? { terminate: true } : {}),
       };
     },
   };

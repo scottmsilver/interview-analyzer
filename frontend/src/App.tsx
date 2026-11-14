@@ -71,8 +71,8 @@ const ANALYSIS_PRESETS: ReadonlyArray<AnalysisPreset> = [
     model: 'gemini-4-hydrogen',
     label: 'Fast — Gemini 4 Hydrogen ★ (Default)',
     shortLabel: 'Fast (Hydrogen)',
-    description: '~2 min • 8.5/10 quality, fast coaching',
-    estimatedSeconds: 125,
+    description: '~1.3 min • 8.5/10 quality, fast coaching',
+    estimatedSeconds: 80,
   },
   {
     id: 'pi-fable-5-1',
@@ -80,8 +80,8 @@ const ANALYSIS_PRESETS: ReadonlyArray<AnalysisPreset> = [
     model: 'claude-fable-5-1',
     label: 'Deep — Fable 5.1',
     shortLabel: 'Deep (Fable 5.1)',
-    description: '~6.5 min • 8.6/10 quality, deepest coaching',
-    estimatedSeconds: 395,
+    description: '~3.8 min • 8.7/10 quality, deepest coaching',
+    estimatedSeconds: 230,
   },
 ]
 
@@ -689,7 +689,7 @@ function MainContent() {
                   Get thoughtful, constructive feedback on your interview practice.
                 </p>
                 <p className="welcome-subtitle">
-                  Fast analysis takes about 2 minutes (or ~6.5 minutes in Deep mode).
+                  Fast analysis takes about 1–1.5 minutes (or ~4 minutes in Deep mode).
                 </p>
               </div>
             </div>
