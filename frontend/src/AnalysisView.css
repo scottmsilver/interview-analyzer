@@ -49,6 +49,7 @@
   transition: all 0.2s;
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 0.25rem;
   color: var(--primary-600);
   font-size: 0.85rem;
@@ -97,6 +98,7 @@
   transition: all 0.2s;
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 0.4rem;
   color: var(--primary-600);
   font-size: 0.85rem;
@@ -202,6 +204,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 .transcript-copy-btn:hover {
@@ -282,6 +285,7 @@
 
 /* Shared View Container */
 .shared-view-container {
+  box-sizing: border-box;
   width: 100%;
   max-width: 900px;
   margin: 0 auto;
@@ -597,7 +601,16 @@
   margin-top: 0.75rem;
 }
 
-.share-emails-input input {
+.share-emails-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #555;
+  margin-bottom: 0.35rem;
+}
+
+.share-emails-input input[type="text"] {
+  box-sizing: border-box;
   width: 100%;
   padding: 0.5rem 0.75rem;
   border: 1px solid #ddd;
@@ -605,9 +618,25 @@
   font-size: 0.9rem;
 }
 
-.share-emails-input input:focus {
+.share-emails-input input[type="text"]:focus {
   outline: none;
   border-color: #888;
+}
+
+.share-email-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+  font-size: 0.8rem;
+  color: #444;
+  cursor: pointer;
+}
+
+.share-email-toggle input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  cursor: pointer;
 }
 
 .share-emails-hint {

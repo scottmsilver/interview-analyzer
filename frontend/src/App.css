@@ -513,6 +513,8 @@ body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   position: relative;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .results-actions {
@@ -522,6 +524,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  z-index: 2;
 }
 
 .auto-saved-indicator {
@@ -565,6 +568,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   color: #666;
 }
 
@@ -612,6 +616,19 @@ body {
   line-height: 1.75;
   color: var(--text-primary);
   font-weight: 400;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+
+.results .markdown-body > :first-child {
+  padding-right: 3rem;
+}
+
+.results:has(.share-button) .markdown-body > :first-child,
+.results:has(.transcript-button) .markdown-body > :first-child,
+.results:has(.view-analysis-button) .markdown-body > :first-child {
+  padding-right: 12.5rem;
 }
 
 .markdown-body h1 {
@@ -687,7 +704,10 @@ body {
 
 .markdown-body table {
   border-collapse: collapse;
+  display: block;
   width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
   margin: 1rem 0;
   font-size: 0.95rem;
 }
@@ -920,9 +940,18 @@ body {
     padding: 1rem;
   }
 
-  .copy-button {
-    top: 0.5rem;
-    right: 0.5rem;
+  .results-actions {
+    position: static;
+    justify-content: flex-end;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .results .markdown-body > :first-child,
+  .results:has(.share-button) .markdown-body > :first-child,
+  .results:has(.transcript-button) .markdown-body > :first-child,
+  .results:has(.view-analysis-button) .markdown-body > :first-child {
+    padding-right: 0;
   }
 }
 

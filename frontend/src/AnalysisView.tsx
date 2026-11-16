@@ -1,12 +1,40 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { getAnalysis, updateAnalysisSharing } from './api'
+import { getAnalysis, updateAnalysisSharing, sendShareEmails } from './api'
 import { Toast, AnalysisMarkdown, Loading, ErrorBox, AnalysisHeader } from './components'
 import { CopyIcon, TranscriptIcon, ShareIcon, LinkIcon } from './icons'
 import { useToast, useCopyToClipboard } from './hooks'
 import { type AnalysisData } from './types'
 import { useAuth } from './App'
 import './AnalysisView.css'
+
+const SIMPLE_EMAIL_REGEX = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/
+
+function parseEmailList(raw: string): { valid: string[]; invalid: string[] } {
+  const tokens = raw
+    .split(/[,;\s]+/)
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean)
+
+  const valid: string[] = []
+  const invalid: string[] = []
+  const seenValid = new Set<string>()
+  const seenInvalid = new Set<string>()
+
+  for (const token of tokens) {
+    if (SIMPLE_EMAIL_REGEX.test(token)) {
+      if (!seenValid.has(token)) {
+        seenValid.add(token)
+        valid.push(token)
+      }
+    } else if (!seenInvalid.has(token)) {
+      seenInvalid.add(token)
+      invalid.push(token)
+    }
+  }
+
+  return { valid, invalid }
+}
 
 export function AnalysisView() {
   const { user } = useAuth()
@@ -18,6 +46,9 @@ export function AnalysisView() {
   const [showShareModal, setShowShareModal] = useState(false)
   const [shareMode, setShareMode] = useState<'private' | 'anyone' | 'specific'>('private')
   const [sharedEmails, setSharedEmails] = useState('')
+  const [anyoneEmails, setAnyoneEmails] = useState('')
+  const [previouslySharedEmails, setPreviouslySharedEmails] = useState<string[]>([])
+  const [sendEmailOnSave, setSendEmailOnSave] = useState(true)
   const [savingShare, setSavingShare] = useState(false)
 
   const { toastMessage, showToast } = useToast()
@@ -61,10 +92,31 @@ export function AnalysisView() {
   const mergeOwnerEmail = (emails: string[]) =>
     Array.from(new Set([...(ownerEmail ? [ownerEmail] : []), ...emails]))
 
+  const parsedSpecific = parseEmailList(sharedEmails)
+  const parsedAnyone = parseEmailList(anyoneEmails)
+  const previousRecipientSet = new Set(previouslySharedEmails)
+  const newSpecificRecipients = parsedSpecific.valid.filter((e) => !previousRecipientSet.has(e))
+  const recipientsToEmail =
+    shareMode === 'anyone'
+      ? parsedAnyone.valid
+      : shareMode === 'specific' && sendEmailOnSave
+        ? (newSpecificRecipients.length > 0 ? newSpecificRecipients : parsedSpecific.valid)
+        : []
+
   const selectShareMode = (mode: 'private' | 'anyone' | 'specific') => {
     setShareMode(mode)
-    if (mode === 'specific' && !sharedEmails.trim() && ownerEmail) {
-      setSharedEmails(ownerEmail)
+    if (mode === 'specific') {
+      setSendEmailOnSave(previouslySharedEmails.length === 0 || newSpecificRecipients.length > 0)
+    }
+  }
+
+  const handleSharedEmailsChange = (value: string) => {
+    const nextNew = parseEmailList(value).valid.filter((e) => !previousRecipientSet.has(e))
+    setSharedEmails(value)
+    if (nextNew.length > 0 && newSpecificRecipients.length === 0) {
+      setSendEmailOnSave(true)
+    } else if (nextNew.length === 0 && newSpecificRecipients.length > 0 && previouslySharedEmails.length > 0) {
+      setSendEmailOnSave(false)
     }
   }
 
@@ -73,8 +125,11 @@ export function AnalysisView() {
       const mode = analysis.shareMode || 'private'
       setShareMode(mode)
       const existing = (analysis.sharedWith || []).map(e => e.trim().toLowerCase()).filter(Boolean)
-      const initial = mode === 'specific' ? mergeOwnerEmail(existing) : existing
-      setSharedEmails(initial.join(', '))
+      const existingRecipients = existing.filter(e => e !== ownerEmail)
+      setPreviouslySharedEmails(existingRecipients)
+      setSharedEmails(mode === 'specific' ? existingRecipients.join(', ') : '')
+      setAnyoneEmails('')
+      setSendEmailOnSave(mode !== 'specific' || existingRecipients.length === 0)
     }
     setShowShareModal(true)
   }
@@ -82,12 +137,29 @@ export function AnalysisView() {
   const saveShareSettings = async () => {
     if (!analysisId || !analysis) return
 
+    if (shareMode === 'specific') {
+      if (parsedSpecific.invalid.length > 0) {
+        showToast(`× Invalid email: ${parsedSpecific.invalid[0]}`)
+        return
+      }
+      if (parsedSpecific.valid.length === 0) {
+        showToast('× Enter at least one email address')
+        return
+      }
+    } else if (shareMode === 'anyone' && parsedAnyone.invalid.length > 0) {
+      showToast(`× Invalid email: ${parsedAnyone.invalid[0]}`)
+      return
+    }
+
+    const toSend = recipientsToEmail
+    if (shareMode !== 'private' && analysis.shareId) {
+      const shareUrl = `${window.location.origin}/shared/${analysis.shareId}`
+      navigator.clipboard?.writeText(shareUrl).catch(() => {})
+    }
+
     setSavingShare(true)
     try {
-      const parsedEmails = shareMode === 'specific'
-        ? sharedEmails.split(',').map(e => e.trim().toLowerCase()).filter(e => e.includes('@'))
-        : []
-      const emails = shareMode === 'specific' ? mergeOwnerEmail(parsedEmails) : []
+      const emails = shareMode === 'specific' ? mergeOwnerEmail(parsedSpecific.valid) : []
 
       await updateAnalysisSharing(analysisId, shareMode, emails)
 
@@ -98,16 +170,31 @@ export function AnalysisView() {
         sharedWith: emails
       })
 
-      setShowShareModal(false)
-
-      // Auto-copy link to clipboard for shareable modes
-      if (shareMode !== 'private' && analysis.shareId) {
-        const shareUrl = `${window.location.origin}/shared/${analysis.shareId}`
-        navigator.clipboard.writeText(shareUrl)
+      if (toSend.length > 0) {
+        try {
+          const emailRes = await sendShareEmails(analysisId, toSend)
+          if (emailRes.sent.length > 0 && emailRes.failed.length === 0) {
+            showToast(
+              `Link copied & emailed to ${emailRes.sent.length === 1 ? emailRes.sent[0] : `${emailRes.sent.length} people`}`
+            )
+          } else if (emailRes.sent.length > 0) {
+            showToast(`Saved; emailed ${emailRes.sent.length}, failed for ${emailRes.failed[0].email}`)
+          } else {
+            showToast(`Sharing saved, but email failed: ${emailRes.failed[0]?.error || 'Unknown error'}`)
+          }
+        } catch (emailErr) {
+          console.error('Error sending share email:', emailErr)
+          showToast(
+            `Sharing saved, but email failed: ${emailErr instanceof Error ? emailErr.message : 'Unknown error'}`
+          )
+        }
+      } else if (shareMode !== 'private' && analysis.shareId) {
         showToast('✓ Link copied to clipboard')
       } else {
         showToast('✓ Sharing updated')
       }
+
+      setShowShareModal(false)
     } catch (err) {
       console.error('Error saving share settings:', err)
       showToast('× Failed to save')
@@ -225,7 +312,7 @@ export function AnalysisView() {
                     <div className="share-option-desc">Only you can view this analysis</div>
                   </div>
                 </label>
-                <label
+                <div
                   className={`share-option ${shareMode === 'anyone' ? 'selected' : ''}`}
                   onClick={() => selectShareMode('anyone')}
                 >
@@ -238,9 +325,23 @@ export function AnalysisView() {
                   <div className="share-option-content">
                     <div className="share-option-label">Anyone with link</div>
                     <div className="share-option-desc">Anyone with the link can view</div>
+                    {shareMode === 'anyone' && (
+                      <div className="share-emails-input" onClick={(e) => e.stopPropagation()}>
+                        <span className="share-emails-label">Email link to (optional)</span>
+                        <input
+                          type="text"
+                          placeholder="colleague@example.com, coach@example.com"
+                          value={anyoneEmails}
+                          onChange={(e) => setAnyoneEmails(e.target.value)}
+                        />
+                        <div className="share-emails-hint">
+                          Optional — separate multiple emails with commas to send the link now
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </label>
-                <label
+                </div>
+                <div
                   className={`share-option ${shareMode === 'specific' ? 'selected' : ''}`}
                   onClick={() => selectShareMode('specific')}
                 >
@@ -254,21 +355,34 @@ export function AnalysisView() {
                     <div className="share-option-label">Specific people</div>
                     <div className="share-option-desc">Only specific email addresses can view</div>
                     {shareMode === 'specific' && (
-                      <div className="share-emails-input">
+                      <div className="share-emails-input" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="text"
-                          placeholder="email1@gmail.com, email2@gmail.com"
+                          placeholder="colleague@example.com, coach@example.com"
                           value={sharedEmails}
-                          onChange={(e) => setSharedEmails(e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => handleSharedEmailsChange(e.target.value)}
                         />
                         <div className="share-emails-hint">
                           Separate multiple emails with commas{ownerEmail ? ` (your email ${ownerEmail} is always included)` : ''}
                         </div>
+                        <label className="share-email-toggle">
+                          <input
+                            type="checkbox"
+                            checked={sendEmailOnSave}
+                            onChange={(e) => setSendEmailOnSave(e.target.checked)}
+                          />
+                          <span>
+                            {previouslySharedEmails.length > 0 && newSpecificRecipients.length === 0
+                              ? 'Re-send shared link email to all recipients'
+                              : newSpecificRecipients.length > 0 && previouslySharedEmails.length > 0
+                                ? 'Email shared link to new recipients'
+                                : 'Email shared link to recipients'}
+                          </span>
+                        </label>
                       </div>
                     )}
                   </div>
-                </label>
+                </div>
               </div>
 
               {shareMode !== 'private' && analysis?.shareId && (
@@ -296,7 +410,9 @@ export function AnalysisView() {
                 onClick={saveShareSettings}
                 disabled={savingShare}
               >
-                {savingShare ? 'Saving...' : 'Save'}
+                {savingShare
+                  ? (recipientsToEmail.length > 0 ? 'Sending...' : 'Saving...')
+                  : (recipientsToEmail.length > 0 ? 'Save & Send Email' : 'Save')}
               </button>
             </div>
           </div>

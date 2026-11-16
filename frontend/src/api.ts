@@ -280,6 +280,46 @@ export async function fetchSharedAnalysis(
   }
 }
 
+export interface SendShareEmailsResult {
+  sent: string[]
+  failed: Array<{ email: string; error: string }>
+}
+
+export async function sendShareEmails(
+  analysisId: string,
+  recipients: string[]
+): Promise<SendShareEmailsResult> {
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('Not authenticated')
+  }
+
+  const idToken = await user.getIdToken()
+  const response = await fetch(`${API_URL}/api/share/send-email`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ analysisId, recipients }),
+  })
+
+  const body = (await response.json().catch(() => ({}))) as {
+    error?: string
+    sent?: string[]
+    failed?: Array<{ email: string; error: string }>
+  }
+
+  if (!response.ok) {
+    throw new Error(body?.error || `HTTP ${response.status}`)
+  }
+
+  return {
+    sent: Array.isArray(body.sent) ? body.sent : [],
+    failed: Array.isArray(body.failed) ? body.failed : [],
+  }
+}
+
 // =============================================================================
 // Invites API
 // =============================================================================

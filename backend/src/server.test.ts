@@ -10,6 +10,11 @@ import {
   isValidAdminKey,
   SlidingWindowRateLimiter
 } from './server.js';
+import {
+  isValidRecipientEmail,
+  resolvePublicAppOrigin,
+  sendShareEmails
+} from './share-email.js';
 
 const activeServers: http.Server[] = [];
 
@@ -388,6 +393,17 @@ describe('GET /api/shared/:shareId', () => {
       collection(name: string) {
         assert.equal(name, 'analyses');
         return {
+          doc(id: string) {
+            return {
+              async get() {
+                const match = Object.values(records).find((rec) => rec._docId === id) ?? records[id];
+                if (!match) {
+                  return { exists: false, data: () => undefined };
+                }
+                return { exists: true, data: () => match };
+              }
+            };
+          },
           where(field: string, _op: string, value: string) {
             assert.equal(field, 'shareId');
             return {
@@ -414,6 +430,8 @@ describe('GET /api/shared/:shareId', () => {
 
   const fakeRecords: Record<string, Record<string, any>> = {
     private1234: {
+      _docId: 'doc-private',
+      shareId: 'private1234',
       userId: 'owner-uid',
       title: 'Private Interview',
       interviewType: 'google-apm',
@@ -424,6 +442,8 @@ describe('GET /api/shared/:shareId', () => {
       sharedWith: ['friend@example.com']
     },
     anyone12345: {
+      _docId: 'doc-anyone',
+      shareId: 'anyone12345',
       userId: 'owner-uid',
       title: 'Public Share',
       interviewType: 'google-apm',
@@ -435,6 +455,8 @@ describe('GET /api/shared/:shareId', () => {
       createdAt: '2026-01-01T00:00:00.000Z'
     },
     specific123: {
+      _docId: 'doc-specific',
+      shareId: 'specific123',
       userId: 'owner-uid',
       title: 'Specific Share',
       interviewType: 'meta-pm',
@@ -527,5 +549,220 @@ describe('GET /api/shared/:shareId', () => {
     });
     assert.equal(strangerRes.status, 403);
     assert.equal((await strangerRes.json() as any).code, 'FORBIDDEN');
+  });
+
+  it('POST /api/share/send-email enforces owner auth, validates sharing state/recipients, and builds server-side shareUrl', async () => {
+    const emailCalls: Array<Parameters<typeof sendShareEmails>[0]> = [];
+    const ownerApp = (opts?: { emailImpl?: typeof sendShareEmails }) =>
+      createApp({
+        isFirebaseConfigured: () => true,
+        getDb: () => createFakeAnalysesDb(fakeRecords),
+        requireApprovedUser: async (req, res, next) => {
+          const auth = req.headers.authorization;
+          if (auth === 'Bearer owner-token') {
+            req.user = { uid: 'owner-uid', email: 'owner@example.com' };
+            return next();
+          }
+          if (auth === 'Bearer recipient-token') {
+            req.user = { uid: 'recipient-uid', email: 'recipient@example.com' };
+            return next();
+          }
+          res.status(401).json({ error: 'Unauthorized' });
+        },
+        sendShareEmails: opts?.emailImpl ?? (async (input) => {
+          emailCalls.push(input);
+          return { sent: input.recipients, failed: [] };
+        })
+      });
+
+    const baseUrl = await startTestServer(ownerApp());
+
+    // Unauthenticated -> 401
+    const unauth = await fetch(`${baseUrl}/api/share/send-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ analysisId: 'doc-specific', recipients: ['recipient@example.com'] })
+    });
+    assert.equal(unauth.status, 401);
+
+    // Non-owner -> 403
+    const nonOwner = await fetch(`${baseUrl}/api/share/send-email`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer recipient-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ analysisId: 'doc-specific', recipients: ['recipient@example.com'] })
+    });
+    assert.equal(nonOwner.status, 403);
+
+    // Missing analysis -> 404
+    const missing = await fetch(`${baseUrl}/api/share/send-email`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer owner-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ analysisId: 'doc-missing', recipients: ['recipient@example.com'] })
+    });
+    assert.equal(missing.status, 404);
+
+    // Private analysis -> 400 NOT_SHARED
+    const priv = await fetch(`${baseUrl}/api/share/send-email`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer owner-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ analysisId: 'doc-private', recipients: ['friend@example.com'] })
+    });
+    assert.equal(priv.status, 400);
+    assert.equal((await priv.json() as any).code, 'NOT_SHARED');
+
+    // Invalid recipient email -> 400
+    const badEmail = await fetch(`${baseUrl}/api/share/send-email`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer owner-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ analysisId: 'doc-specific', recipients: ['not-an-email'] })
+    });
+    assert.equal(badEmail.status, 400);
+
+    // Specific mode rejects recipient not in sharedWith -> 400 RECIPIENT_NOT_ALLOWED
+    const unsharedRecipient = await fetch(`${baseUrl}/api/share/send-email`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer owner-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ analysisId: 'doc-specific', recipients: ['stranger@example.com'] })
+    });
+    assert.equal(unsharedRecipient.status, 400);
+    assert.equal((await unsharedRecipient.json() as any).code, 'RECIPIENT_NOT_ALLOWED');
+
+    // Owner sending in specific mode -> 200 with canonical server-side shareUrl
+    const okSpecific = await fetch(`${baseUrl}/api/share/send-email`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer owner-token',
+        'Content-Type': 'application/json',
+        Origin: 'https://share.example.com'
+      },
+      body: JSON.stringify({ analysisId: 'doc-specific', recipients: ['Recipient@Example.COM'] })
+    });
+    assert.equal(okSpecific.status, 200);
+    assert.deepEqual(await okSpecific.json(), {
+      success: true,
+      sent: ['recipient@example.com'],
+      failed: []
+    });
+    assert.equal(emailCalls.length, 1);
+    assert.equal(emailCalls[0].shareUrl, 'https://share.example.com/shared/specific123');
+    assert.equal(emailCalls[0].shareMode, 'specific');
+    assert.equal(emailCalls[0].sharedByEmail, 'owner@example.com');
+    assert.equal(JSON.stringify(emailCalls[0]).includes('SECRET TRANSCRIPT'), false);
+
+    // Owner sending in anyone mode -> 200
+    const okAnyone = await fetch(`${baseUrl}/api/share/send-email`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer owner-token',
+        'Content-Type': 'application/json',
+        Origin: 'https://share.example.com'
+      },
+      body: JSON.stringify({ analysisId: 'doc-anyone', recipients: ['newguest@example.com'] })
+    });
+    assert.equal(okAnyone.status, 200);
+    assert.equal(emailCalls.length, 2);
+    assert.equal(emailCalls[1].shareUrl, 'https://share.example.com/shared/anyone12345');
+    assert.equal(emailCalls[1].shareMode, 'anyone');
+
+    // Missing Resend configuration -> 503 EMAIL_NOT_CONFIGURED
+    const prevKey = process.env.RESEND_API_KEY;
+    const prevFrom = process.env.RESEND_FROM_EMAIL;
+    delete process.env.RESEND_API_KEY;
+    delete process.env.RESEND_FROM_EMAIL;
+    try {
+      const unconfiguredUrl = await startTestServer(ownerApp({ emailImpl: sendShareEmails }));
+      const unconf = await fetch(`${unconfiguredUrl}/api/share/send-email`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer owner-token',
+          'Content-Type': 'application/json',
+          Origin: 'https://share.example.com'
+        },
+        body: JSON.stringify({ analysisId: 'doc-anyone', recipients: ['newguest@example.com'] })
+      });
+      assert.equal(unconf.status, 503);
+      assert.equal((await unconf.json() as any).code, 'EMAIL_NOT_CONFIGURED');
+    } finally {
+      if (prevKey !== undefined) process.env.RESEND_API_KEY = prevKey;
+      if (prevFrom !== undefined) process.env.RESEND_FROM_EMAIL = prevFrom;
+    }
+  });
+});
+
+describe('share-email helpers', () => {
+  it('validates recipient emails and resolves public origins safely', () => {
+    assert.equal(isValidRecipientEmail('coach@example.com'), true);
+    assert.equal(isValidRecipientEmail('bad\r\nheader@example.com'), false);
+    assert.equal(isValidRecipientEmail('Alice <alice@example.com>'), false);
+
+    assert.equal(
+      resolvePublicAppOrigin({
+        configuredUrl: 'https://interview.example.com/',
+        requestOrigin: 'https://other.example.com'
+      }),
+      'https://interview.example.com'
+    );
+    assert.equal(
+      resolvePublicAppOrigin({
+        configuredUrl: '',
+        requestOrigin: 'https://app.example.com'
+      }),
+      'https://app.example.com'
+    );
+    assert.equal(
+      resolvePublicAppOrigin({
+        configuredUrl: 'javascript:alert(1)',
+        requestOrigin: 'javascript:alert(1)',
+        requestHost: 'app.example.com',
+        requestProto: 'https'
+      }),
+      'https://app.example.com'
+    );
+  });
+
+  it('sends individual Resend payloads per recipient and scrubs API keys from errors', async () => {
+    const requests: Array<{ url: string; auth: string | null; body: Record<string, any> }> = [];
+    const result = await sendShareEmails(
+      {
+        recipients: ['a@example.com', 'b@example.com', 'a@example.com'],
+        shareUrl: 'https://app.example.com/shared/share1234',
+        analysisTitle: 'Google APM Practice',
+        interviewType: 'google-apm',
+        shareMode: 'specific',
+        sharedByEmail: 'owner@example.com'
+      },
+      {
+        apiKey: 'test_resend_key_12345',
+        fromEmail: 'Interview Analyzer <noreply@example.com>',
+        baseUrl: 'https://api.resend.com',
+        fetchImpl: (async (url: string | URL, init?: RequestInit) => {
+          const parsed = JSON.parse(String(init?.body || '{}'));
+          const headers = init?.headers as Record<string, string>;
+          requests.push({ url: String(url), auth: headers?.Authorization ?? null, body: parsed });
+          if (parsed.to?.[0] === 'b@example.com') {
+            return new Response(
+              JSON.stringify({ message: 'Bad key test_resend_key_12345 rejected' }),
+              { status: 422, headers: { 'Content-Type': 'application/json' } }
+            );
+          }
+          return new Response(JSON.stringify({ id: 'email_123' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }) as typeof fetch
+      }
+    );
+
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].url, 'https://api.resend.com/emails');
+    assert.equal(requests[0].auth, 'Bearer test_resend_key_12345');
+    assert.deepEqual(requests[0].body.to, ['a@example.com']);
+    assert.equal(requests[0].body.reply_to, 'owner@example.com');
+    assert.match(requests[0].body.html, /https:\/\/app\.example\.com\/shared\/share1234/);
+    assert.deepEqual(result.sent, ['a@example.com']);
+    assert.equal(result.failed.length, 1);
+    assert.equal(result.failed[0].email, 'b@example.com');
+    assert.equal(result.failed[0].error.includes('test_resend_key_12345'), false);
+    assert.match(result.failed[0].error, /\[REDACTED\]/);
   });
 });

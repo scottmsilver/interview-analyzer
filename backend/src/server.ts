@@ -38,6 +38,11 @@ import {
   getDb as defaultGetDb,
   isFirebaseConfigured as defaultIsFirebaseConfigured
 } from './firebase-admin.js';
+import {
+  isValidRecipientEmail,
+  resolvePublicAppOrigin,
+  sendShareEmails as defaultSendShareEmails
+} from './share-email.js';
 
 // Load environment variables
 dotenv.config();
@@ -184,6 +189,8 @@ export interface ServerDeps {
   getDb?: () => ReturnType<typeof defaultGetDb>;
   analyzeRateLimiter?: RequestHandler;
   sharedRateLimiter?: RequestHandler;
+  shareEmailRateLimiter?: RequestHandler;
+  sendShareEmails?: typeof defaultSendShareEmails;
   staticDir?: string;
 }
 
@@ -194,6 +201,7 @@ export function createApp(deps: ServerDeps = {}) {
   const optionalVerifiedUser = deps.optionalVerifiedUser ?? defaultOptionalVerifiedUser;
   const isFirebaseConfigured = deps.isFirebaseConfigured ?? defaultIsFirebaseConfigured;
   const getDb = deps.getDb ?? defaultGetDb;
+  const sendShareEmails = deps.sendShareEmails ?? defaultSendShareEmails;
 
   const analyzeRateLimiter =
     deps.analyzeRateLimiter ??
@@ -209,6 +217,14 @@ export function createApp(deps: ServerDeps = {}) {
       60 * 1000,
       60,
       (req) => `ip:${getClientIp(req)}`
+    ).middleware;
+
+  const shareEmailRateLimiter =
+    deps.shareEmailRateLimiter ??
+    new SlidingWindowRateLimiter(
+      15 * 60 * 1000,
+      20,
+      (req) => (req.user?.uid ? `uid:${req.user.uid}` : `ip:${getClientIp(req)}`)
     ).middleware;
 
   app.use(securityHeadersMiddleware);
@@ -654,6 +670,154 @@ export function createApp(deps: ServerDeps = {}) {
       });
     }
   });
+
+  /**
+   * Email the shared link for an analysis to recipients via Resend.
+   * Owner-only; shareUrl is constructed server-side from the stored shareId.
+   */
+  app.post(
+    '/api/share/send-email',
+    requireApprovedUser,
+    shareEmailRateLimiter,
+    express.json({ limit: '16kb' }),
+    async (req: Request, res: Response) => {
+      try {
+        const rawAnalysisId = req.body?.analysisId;
+        const analysisId = typeof rawAnalysisId === 'string' ? rawAnalysisId.trim() : '';
+        if (!analysisId || analysisId.length > 128 || analysisId.includes('/')) {
+          return res.status(400).json({
+            error: 'Invalid analysisId'
+          });
+        }
+
+        const rawRecipients = req.body?.recipients;
+        if (!Array.isArray(rawRecipients)) {
+          return res.status(400).json({
+            error: 'recipients must be an array of email addresses'
+          });
+        }
+
+        const normalizedRecipients: string[] = [];
+        const seen = new Set<string>();
+        for (const entry of rawRecipients) {
+          if (typeof entry !== 'string') {
+            return res.status(400).json({ error: 'Invalid recipient email' });
+          }
+          const email = entry.trim().toLowerCase();
+          if (!isValidRecipientEmail(email)) {
+            return res.status(400).json({
+              error: `Invalid recipient email: ${email || '(empty)'}`
+            });
+          }
+          if (!seen.has(email)) {
+            seen.add(email);
+            normalizedRecipients.push(email);
+          }
+        }
+
+        if (normalizedRecipients.length === 0 || normalizedRecipients.length > 10) {
+          return res.status(400).json({
+            error: 'Provide between 1 and 10 recipient email addresses'
+          });
+        }
+
+        if (!isFirebaseConfigured()) {
+          return res.status(503).json({
+            error: 'Email sharing service unavailable',
+            code: 'SERVICE_UNAVAILABLE'
+          });
+        }
+
+        const docSnap = await getDb().collection('analyses').doc(analysisId).get();
+        if (!docSnap.exists) {
+          return res.status(404).json({
+            error: 'Analysis not found',
+            code: 'NOT_FOUND'
+          });
+        }
+
+        const data = (docSnap.data() || {}) as Record<string, any>;
+        if (!data.userId || data.userId !== req.user?.uid) {
+          return res.status(403).json({
+            error: 'Only the owner can email shared links',
+            code: 'FORBIDDEN'
+          });
+        }
+
+        if (
+          typeof data.shareId !== 'string' ||
+          !SHARE_ID_REGEX.test(data.shareId) ||
+          (data.shareMode !== 'anyone' && data.shareMode !== 'specific')
+        ) {
+          return res.status(400).json({
+            error: 'Enable sharing before sending share emails',
+            code: 'NOT_SHARED'
+          });
+        }
+
+        if (data.shareMode === 'specific') {
+          const allowedSet = new Set(
+            (Array.isArray(data.sharedWith) ? data.sharedWith : [])
+              .filter((entry): entry is string => typeof entry === 'string')
+              .map((entry) => entry.trim().toLowerCase())
+          );
+          const unsharedRecipient = normalizedRecipients.find((email) => !allowedSet.has(email));
+          if (unsharedRecipient) {
+            return res.status(400).json({
+              error: 'All recipients must have access in specific sharing mode',
+              code: 'RECIPIENT_NOT_ALLOWED'
+            });
+          }
+        }
+
+        const publicOrigin = resolvePublicAppOrigin({
+          requestOrigin: req.get('origin'),
+          requestHost: req.get('host'),
+          requestProto: req.protocol
+        });
+        if (!publicOrigin) {
+          return res.status(500).json({
+            error: 'Unable to resolve public application URL'
+          });
+        }
+
+        const shareUrl = `${publicOrigin}/shared/${encodeURIComponent(data.shareId)}`;
+        const result = await sendShareEmails({
+          recipients: normalizedRecipients,
+          shareUrl,
+          analysisTitle: typeof data.title === 'string' && data.title.trim() ? data.title : 'Interview Analysis',
+          interviewType: typeof data.interviewType === 'string' ? data.interviewType : null,
+          shareMode: data.shareMode,
+          sharedByEmail: req.user?.email ?? null
+        });
+
+        if (result.sent.length === 0 && result.failed.length > 0) {
+          return res.status(502).json({
+            error: result.failed[0].error || 'Failed to send email',
+            sent: result.sent,
+            failed: result.failed
+          });
+        }
+
+        return res.status(200).json({
+          success: true,
+          sent: result.sent,
+          failed: result.failed
+        });
+      } catch (error: any) {
+        if (error?.code === 'EMAIL_NOT_CONFIGURED') {
+          return res.status(503).json({
+            error: 'Email delivery is not configured',
+            code: 'EMAIL_NOT_CONFIGURED'
+          });
+        }
+        console.error('[ShareEmail] Error sending share email:', error instanceof Error ? error.message : error);
+        return res.status(500).json({
+          error: 'Failed to send share email'
+        });
+      }
+    }
+  );
 
   /**
    * Get supported interview types
